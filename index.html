@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b0f14">
+  <title>ERHub</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="authView" class="auth-shell">
+    <section class="auth-card">
+      <div class="brand"><span>ER</span>Hub</div>
+      <h1>Sala de emergência conectada</h1>
+      <p class="muted">Entre para acessar a mesma sala em qualquer aparelho.</p>
+      <form id="loginForm" class="stack">
+        <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required></label>
+        <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required></label>
+        <button type="submit">Entrar</button>
+      </form>
+      <form id="signupForm" class="stack hidden">
+        <label>Nome<input id="signupName" autocomplete="name" maxlength="80" required></label>
+        <label>E-mail<input id="signupEmail" type="email" autocomplete="email" required></label>
+        <label>Senha<input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <small>Use ao menos 8 caracteres.</small>
+        <button type="submit">Criar conta</button>
+      </form>
+      <form id="recoveryForm" class="stack hidden">
+        <label>E-mail<input id="recoveryEmail" type="email" autocomplete="email" required></label>
+        <button type="submit">Enviar link de recuperação</button>
+      </form>
+      <form id="newPasswordForm" class="stack hidden">
+        <label>Nova senha<input id="newPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <button type="submit">Salvar nova senha</button>
+      </form>
+      <div class="auth-links">
+        <button id="showLogin" class="link-button hidden" type="button">Já tenho conta</button>
+        <button id="showSignup" class="link-button" type="button">Criar conta</button>
+        <button id="showRecovery" class="link-button" type="button">Esqueci a senha</button>
+      </div>
+    </section>
+  </main>
+
+  <main id="workspaceView" class="auth-shell hidden">
+    <section class="auth-card">
+      <div class="brand"><span>ER</span>Hub</div>
+      <h1>Escolha sua sala</h1>
+      <p class="muted">Crie uma sala ou use o código recebido da equipe.</p>
+      <form id="createRoomForm" class="stack">
+        <label>Nome da sala<input id="roomName" placeholder="Ex.: Sala Laranja" maxlength="80" required></label>
+        <button type="submit">Criar sala</button>
+      </form>
+      <div class="separator">ou</div>
+      <form id="joinRoomForm" class="stack">
+        <label>Código de convite<input id="inviteCode" placeholder="XXXXXXXX" maxlength="8" required></label>
+        <button type="submit" class="secondary">Entrar com código</button>
+      </form>
+      <button class="link-button" type="button" onclick="logout()">Sair da conta</button>
+    </section>
+  </main>
+
+  <div id="appView" class="hidden">
+    <header>
+      <div class="header-left">
+        <div class="brand brand-small"><span>ER</span>Hub</div>
+        <select id="roomSelect" aria-label="Sala atual"></select>
+        <button id="inviteButton" class="ghost" type="button" title="Copiar código da sala"></button>
+      </div>
+      <nav>
+        <button type="button" onclick="showView('painel')">🏥 Painel</button>
+        <button type="button" onclick="showView('historico')">📋 Histórico</button>
+        <button type="button" onclick="gerarPDF()">🧾 Passagem</button>
+        <button type="button" onclick="exportarDados()">⬇️ Exportar</button>
+        <button type="button" onclick="abrirModalImportar()">⬆️ Importar</button>
+        <button type="button" onclick="novo()">+ Novo</button>
+        <button class="ghost" type="button" onclick="trocarSala()">＋ Sala</button>
+        <button class="ghost" type="button" onclick="logout()">Sair</button>
+      </nav>
+    </header>
+    <aside id="migrationBanner" class="banner hidden">
+      Há dados antigos salvos neste aparelho.
+      <button type="button" onclick="migrarDadosLocais()">Migrar para esta sala</button>
+      <button type="button" class="ghost" onclick="ocultarMigracao()">Agora não</button>
+    </aside>
+    <section id="painel" class="view active"><div id="board" class="board"></div></section>
+    <section id="historico" class="view">
+      <div class="history-toolbar"><span>Pacientes com desfecho</span></div>
+      <div id="history" class="history"></div>
+    </section>
+  </div>
+
+  <div id="patientModal" class="modal" role="dialog" aria-modal="true" aria-label="Paciente">
+    <div class="modal-content">
+      <button class="modal-close" type="button" onclick="fecharPaciente()">×</button>
+      <label>Nome do paciente<input id="nome" maxlength="120"></label>
+      <div class="field-grid">
+        <label>Leito<input id="leito" maxlength="40"></label>
+        <label>Idade<input id="idade" type="number" min="0" max="130"></label>
+      </div>
+      <label>Diagnóstico / queixa<textarea id="dx" rows="3" maxlength="3000"></textarea></label>
+      <label>Responsável<input id="responsavel" maxlength="120"></label>
+      <label>Prioridade<select id="prio"><option value="red">Crítico</option><option value="yellow">Urgente</option><option value="green">Estável</option></select></label>
+      <label>Entrada na sala<input id="entrada" type="datetime-local"></label>
+      <div id="pendencias" class="pending-list"></div>
+      <div class="add-pend"><input id="novaPend" placeholder="Nova pendência..." maxlength="240"><button type="button" onclick="addPend()">+</button></div>
+      <div class="actions">
+        <button type="button" onclick="fecharPaciente()">Salvar</button>
+        <button type="button" class="btn-green" onclick="desfecho('discharged')">Alta</button>
+        <button type="button" class="btn-yellow" onclick="desfecho('transferred')">Transferir</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="importModal" class="modal" role="dialog" aria-modal="true" aria-label="Importar passagem">
+    <div class="modal-content">
+      <button class="modal-close" type="button" onclick="fecharModalImportar()">×</button>
+      <h2>Importar passagem</h2>
+      <input type="file" id="importFile" accept="application/json">
+      <div class="separator">ou cole o JSON</div>
+      <textarea id="textoColado" rows="8" placeholder="Cole aqui o conteúdo exportado..."></textarea>
+      <button type="button" onclick="importarTexto()">Importar</button>
+    </div>
+  </div>
+  <div id="loading" class="loading hidden">Sincronizando…</div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  <script defer src="app.js"></script>
+</body>
+</html>
