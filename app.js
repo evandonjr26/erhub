@@ -100,15 +100,13 @@ function bindEvents() {
   $('joinRoomForm').onsubmit = joinRoom;
   $('roomSelect').onchange = () => selectRoom($('roomSelect').value);
   $('inviteButton').onclick = copyInvite;
-  $('importFile').onchange = importFile;
   $('novaPend').onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); addPend(); } };
   ['nome', 'leito', 'idade', 'dx', 'responsavel', 'prio', 'entrada'].forEach((id) => {
     $(id).addEventListener(id === 'prio' || id === 'entrada' ? 'change' : 'input', scheduleSave);
   });
   $('patientModal').onclick = (event) => { if (event.target === $('patientModal')) fecharPaciente(); };
-  $('importModal').onclick = (event) => { if (event.target === $('importModal')) fecharModalImportar(); };
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') { fecharPaciente(); fecharModalImportar(); }
+    if (event.key === 'Escape') fecharPaciente();
   });
 }
 
@@ -130,10 +128,8 @@ async function signup(event) {
   });
   setLoading(false);
   if (error) return toast(friendlyError(error), true);
-  if (!data.session) {
-    toast('Conta criada. Confira seu e-mail para confirmar o acesso.');
-    showAuthForm('login');
-  }
+  if (data.session) await handleSession(data.session);
+  else toast('Não foi possível iniciar o acesso. Tente entrar com sua conta.', true);
 }
 
 async function recoverPassword(event) {
@@ -207,7 +203,6 @@ async function selectRoom(id) {
   showOnly('appView');
   await loadPatients();
   subscribeRealtime();
-  checkLocalMigration();
 }
 
 function trocarSala() { showOnly('workspaceView'); }
@@ -420,92 +415,6 @@ async function desfecho(status) {
 }
 
 function gerarPDF() { showView('painel'); setTimeout(() => window.print(), 250); }
-
-function exportarDados() {
-  const payload = { version: 2, exportadoEm: new Date().toISOString(), sala: room.name, pacientes: patients.map(toExportPatient) };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = `erhub-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`;
-  link.click();
-  URL.revokeObjectURL(link.href);
-}
-
-function toExportPatient(patient) {
-  return { id: patient.id, nome: patient.name, leito: patient.bed, idade: patient.age, dx: patient.diagnosis, prio: patient.priority, responsavel: patient.responsible, entrada: patient.entered_at, desfecho: patient.status === 'discharged' ? 'Alta' : patient.status === 'transferred' ? 'Transferência' : null, pend: (patient.pending_items || []).map((item) => ({ t: item.title, d: item.done })) };
-}
-
-function abrirModalImportar() { $('textoColado').value = ''; $('importModal').classList.add('open'); }
-function fecharModalImportar() { $('importModal').classList.remove('open'); $('importFile').value = ''; }
-
-async function importFile(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  try { await importPayload(JSON.parse(await file.text())); }
-  catch (error) { toast(`Arquivo inválido: ${friendlyError(error)}`, true); }
-}
-
-async function importarTexto() {
-  try { await importPayload(JSON.parse($('textoColado').value.trim())); }
-  catch (error) { toast(`Texto inválido: ${friendlyError(error)}`, true); }
-}
-
-function normalizeImport(data) {
-  if (!data || !Array.isArray(data.pacientes)) throw new Error('não encontrei uma lista de pacientes');
-  const active = data.pacientes || [];
-  const history = Array.isArray(data.historico) ? data.historico : [];
-  return [...active, ...history];
-}
-
-async function importPayload(data) {
-  const source = normalizeImport(data);
-  if (!source.length) return toast('O arquivo não contém pacientes.', true);
-  if (!confirm(`Importar ${source.length} paciente(s) para ${room.name}? Os dados atuais serão mantidos.`)) return;
-  setLoading(true);
-  for (let index = 0; index < source.length; index += 1) {
-    const item = source[index];
-    const status = item.desfecho === 'Alta' ? 'discharged' : item.desfecho === 'Transferência' ? 'transferred' : 'active';
-    const { data: created, error } = await db.from('patients').insert({
-      room_id: room.id, name: String(item.nome || ''), bed: String(item.leito || ''),
-      age: item.idade === '' || item.idade == null ? null : Number(item.idade), diagnosis: String(item.dx || ''),
-      priority: ['red', 'yellow', 'green'].includes(item.prio) ? item.prio : 'yellow', responsible: String(item.responsavel || ''),
-      entered_at: validIso(item.entrada), status, outcome_at: status === 'active' ? null : new Date().toISOString(),
-      sort_order: activePatients().length + index, created_by: session.user.id, updated_by: session.user.id
-    }).select().single();
-    if (error) { setLoading(false); throw error; }
-    const pending = (Array.isArray(item.pend) && item.pend.length ? item.pend : DEFAULT_PENDING.map((title) => ({ t: title, d: false }))).map((pendingItem, position) => ({
-      patient_id: created.id, room_id: room.id, title: String(pendingItem.t || '').slice(0, 240), done: Boolean(pendingItem.d), position, created_by: session.user.id, updated_by: session.user.id
-    })).filter((pendingItem) => pendingItem.title.trim());
-    if (pending.length) {
-      const { error: pendingError } = await db.from('pending_items').insert(pending);
-      if (pendingError) { setLoading(false); throw pendingError; }
-    }
-  }
-  setLoading(false);
-  fecharModalImportar();
-  localStorage.setItem('erhub_local_migrated', '1');
-  $('migrationBanner').classList.add('hidden');
-  await loadPatients();
-  toast('Importação concluída. Os dados agora estão sincronizados.');
-}
-
-function checkLocalMigration() {
-  const oldPatients = JSON.parse(localStorage.getItem('p') || '[]');
-  const oldHistory = JSON.parse(localStorage.getItem('h') || '[]');
-  const hasOld = oldPatients.length || oldHistory.length;
-  $('migrationBanner').classList.toggle('hidden', !hasOld || localStorage.getItem('erhub_local_migrated') === '1');
-}
-
-async function migrarDadosLocais() {
-  await importPayload({ pacientes: JSON.parse(localStorage.getItem('p') || '[]'), historico: JSON.parse(localStorage.getItem('h') || '[]') });
-}
-
-function ocultarMigracao() { $('migrationBanner').classList.add('hidden'); }
-
-function validIso(value) {
-  const date = value ? new Date(value) : new Date();
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
-}
 
 function toLocalInput(value) {
   const date = new Date(value || Date.now());
