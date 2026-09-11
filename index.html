@@ -2,26 +2,30 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b0f14">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <meta name="description" content="Gestão colaborativa da sala de emergência.">
   <title>ERHub</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main id="authView" class="auth-shell">
-    <section class="auth-card">
-      <div class="brand"><span>ER</span>Hub</div>
+    <section class="auth-card glass">
+      <div class="brand-mark" aria-label="ERHub"><span>ER</span>Hub</div>
+      <div class="eyebrow">Cuidado conectado</div>
       <h1>O seu Hub da sala de Emergência</h1>
-      <p class="muted">Entre para acessar a mesma sala em qualquer aparelho.</p>
+      <p class="muted">Acompanhe pacientes, pendências e a passagem de plantão em tempo real.</p>
       <form id="loginForm" class="stack">
         <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required></label>
-        <label>Senha<input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required></label>
-        <button type="submit">Entrar</button>
+        <label>Senha<span class="password-field"><input id="loginPassword" type="password" autocomplete="current-password" minlength="8" required><button class="peek" type="button" data-target="loginPassword" aria-label="Mostrar senha">👁</button></span></label>
+        <button type="submit">Entrar no ERHub</button>
       </form>
       <form id="signupForm" class="stack hidden">
         <label>Nome<input id="signupName" autocomplete="name" maxlength="80" required></label>
         <label>E-mail<input id="signupEmail" type="email" autocomplete="email" required></label>
-        <label>Senha<input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+        <label>Senha<span class="password-field"><input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required><button class="peek" type="button" data-target="signupPassword" aria-label="Mostrar senha">👁</button></span></label>
         <small>Use ao menos 8 caracteres.</small>
         <button type="submit">Criar conta</button>
       </form>
@@ -38,76 +42,60 @@
         <button id="showSignup" class="link-button" type="button">Criar conta</button>
         <button id="showRecovery" class="link-button" type="button">Esqueci a senha</button>
       </div>
+      <button id="installAuth" class="install-link hidden" type="button">Instalar aplicativo</button>
     </section>
   </main>
 
   <main id="workspaceView" class="auth-shell hidden">
-    <section class="auth-card">
-      <div class="brand"><span>ER</span>Hub</div>
-      <h1>Escolha sua sala</h1>
+    <section class="auth-card glass">
+      <div class="brand-mark"><span>ER</span>Hub</div><div class="eyebrow">Ambiente de trabalho</div><h1>Escolha sua sala</h1>
       <p class="muted">Crie uma sala ou use o código recebido da equipe.</p>
-      <form id="createRoomForm" class="stack">
-        <label>Nome da sala<input id="roomName" placeholder="Ex.: Sala Laranja" maxlength="80" required></label>
-        <button type="submit">Criar sala</button>
-      </form>
+      <form id="createRoomForm" class="stack"><label>Nome da sala<input id="roomName" placeholder="Ex.: Sala Laranja" maxlength="80" required></label><button type="submit">Criar sala</button></form>
       <div class="separator">ou</div>
-      <form id="joinRoomForm" class="stack">
-        <label>Código de convite<input id="inviteCode" placeholder="XXXXXXXX" maxlength="8" required></label>
-        <button type="submit" class="secondary">Entrar com código</button>
-      </form>
-      <button class="link-button" type="button" onclick="logout()">Sair da conta</button>
+      <form id="joinRoomForm" class="stack"><label>Código de convite<input id="inviteCode" placeholder="XXXXXXXX" maxlength="8" autocapitalize="characters" required></label><button type="submit" class="secondary">Entrar com código</button></form>
+      <button class="link-button" type="button" data-action="logout">Sair da conta</button>
     </section>
   </main>
 
-  <div id="appView" class="hidden">
-    <header>
-      <div class="header-left">
-        <div class="brand brand-small"><span>ER</span>Hub</div>
-        <select id="roomSelect" aria-label="Sala atual"></select>
-        <button id="inviteButton" class="ghost" type="button" title="Copiar código da sala"></button>
-      </div>
-      <nav>
-        <button type="button" onclick="showView('painel')">🏥 Painel</button>
-        <button type="button" onclick="showView('historico')">📋 Histórico</button>
-        <button type="button" onclick="gerarPDF()">🧾 Passagem</button>
-        <button type="button" onclick="novo()">+ Novo</button>
-        <button class="ghost" type="button" onclick="trocarSala()">＋ Sala</button>
-        <button class="ghost" type="button" onclick="logout()">Sair</button>
+  <div id="appView" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand-mark brand-small"><span>ER</span>Hub</div>
+      <nav class="side-nav" aria-label="Navegação principal">
+        <button class="nav-item active" data-view="painel"><span>⌂</span>Painel</button><button class="nav-item" data-view="historico"><span>↺</span>Histórico</button><button class="nav-item" data-view="passagem"><span>≡</span>Passagem</button><button class="nav-item" data-view="auditoria"><span>◷</span>Auditoria</button>
       </nav>
-    </header>
-    <section id="painel" class="view active"><div id="board" class="board"></div></section>
-    <section id="historico" class="view">
-      <div class="history-toolbar"><span>Pacientes com desfecho</span></div>
-      <div id="history" class="history"></div>
-    </section>
+      <div class="sidebar-foot"><button class="nav-item" data-action="lock"><span>⌾</span>Bloquear</button><button class="nav-item" data-action="switch-room"><span>＋</span>Outra sala</button><button class="nav-item" data-action="logout"><span>↪</span>Sair</button></div>
+    </aside>
+    <main class="main-area">
+      <header class="topbar">
+        <div class="room-heading"><select id="roomSelect" aria-label="Sala atual"></select><div class="live-line"><span id="connectionDot" class="live-dot"></span><span id="connectionText">Conectando…</span><span class="dot-sep">•</span><span id="presenceText">1 pessoa online</span></div></div>
+        <div class="top-actions"><span id="syncStatus" class="sync-pill">Tudo salvo</span><button id="shareButton" class="button ghost" type="button">Compartilhar sala</button><button class="button primary" type="button" data-action="new-patient">＋ Novo paciente</button></div>
+      </header>
+      <section id="painel" class="view active">
+        <div class="page-intro"><div><div class="eyebrow">Visão em tempo real</div><h1>Painel da emergência</h1></div><div id="lastSync" class="muted">Atualizado agora</div></div>
+        <div id="kpis" class="kpi-grid"></div>
+        <div class="toolbar"><label class="search-box"><span>⌕</span><input id="searchInput" placeholder="Buscar paciente, leito, diagnóstico…"></label><div id="priorityFilters" class="filter-group"><button class="chip active" data-filter="all">Todos</button><button class="chip" data-filter="red">Críticos</button><button class="chip" data-filter="yellow">Urgentes</button><button class="chip" data-filter="green">Estáveis</button><button class="chip" data-filter="overdue">Em atraso</button></div></div>
+        <div id="board" class="board"></div>
+      </section>
+      <section id="historico" class="view"><div class="page-intro"><div><div class="eyebrow">Linha do tempo</div><h1>Histórico de pacientes</h1></div></div><div class="toolbar"><label class="search-box"><span>⌕</span><input id="historySearch" placeholder="Buscar no histórico…"></label><select id="historyFilter"><option value="all">Todos os desfechos</option><option value="discharged">Altas</option><option value="transferred">Transferências</option></select></div><div id="history" class="history"></div></section>
+      <section id="passagem" class="view"><div class="page-intro"><div><div class="eyebrow">Plantão seguro</div><h1>Passagem de plantão</h1></div><button class="button primary" type="button" data-action="print">Imprimir / PDF</button></div><div id="handoff" class="handoff"></div></section>
+      <section id="auditoria" class="view"><div class="page-intro"><div><div class="eyebrow">Rastreabilidade</div><h1>Atividade da sala</h1></div><button id="refreshAudit" class="button ghost" type="button">Atualizar</button></div><div id="auditList" class="audit-list"></div></section>
+    </main>
+    <nav class="bottom-nav"><button class="active" data-view="painel"><span>⌂</span>Painel</button><button data-view="historico"><span>↺</span>Histórico</button><button class="new-mobile" data-action="new-patient"><span>＋</span>Novo</button><button data-view="passagem"><span>≡</span>Passagem</button><button data-action="mobile-menu"><span>•••</span>Menu</button></nav>
   </div>
 
-  <div id="patientModal" class="modal" role="dialog" aria-modal="true" aria-label="Paciente">
-    <div class="modal-content">
-      <button class="modal-close" type="button" onclick="fecharPaciente()">×</button>
-      <label>Nome do paciente<input id="nome" maxlength="120"></label>
-      <div class="field-grid">
-        <label>Leito<input id="leito" maxlength="40"></label>
-        <label>Idade<input id="idade" type="number" min="0" max="130"></label>
-      </div>
-      <label>Diagnóstico / queixa<textarea id="dx" rows="3" maxlength="3000"></textarea></label>
-      <label>Responsável<input id="responsavel" maxlength="120"></label>
-      <label>Prioridade<select id="prio"><option value="red">Crítico</option><option value="yellow">Urgente</option><option value="green">Estável</option></select></label>
-      <label>Entrada na sala<input id="entrada" type="datetime-local"></label>
-      <div id="pendencias" class="pending-list"></div>
-      <div class="add-pend"><input id="novaPend" placeholder="Nova pendência..." maxlength="240"><button type="button" onclick="addPend()">+</button></div>
-      <div class="actions">
-        <button type="button" onclick="fecharPaciente()">Salvar</button>
-        <button type="button" class="btn-green" onclick="desfecho('discharged')">Alta</button>
-        <button type="button" class="btn-yellow" onclick="desfecho('transferred')">Transferir</button>
-      </div>
-    </div>
+  <div id="patientModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="patientModalTitle">
+    <form id="patientForm" class="modal-panel patient-panel">
+      <div class="modal-head"><div><div id="patientModalEyebrow" class="eyebrow">Paciente</div><h2 id="patientModalTitle">Novo paciente</h2></div><button class="icon-button" type="button" data-close="patientModal">×</button></div>
+      <div class="form-grid"><label class="span-2">Nome do paciente<input id="nome" maxlength="120" required placeholder="Nome completo"></label><label>Leito<input id="leito" maxlength="40" placeholder="Ex.: Box 03"></label><label>Idade<input id="idade" type="number" min="0" max="130" placeholder="—"></label><label class="span-2">Diagnóstico / queixa<textarea id="dx" rows="3" maxlength="3000" placeholder="Resumo clínico objetivo"></textarea></label><label>Responsável<input id="responsavel" maxlength="120" placeholder="Profissional responsável"></label><label>Prioridade<select id="prio"><option value="red">Crítico</option><option value="yellow">Urgente</option><option value="green">Estável</option></select></label><label>Entrada na sala<input id="entrada" type="datetime-local"></label><label>Notas para passagem<textarea id="handoffNotes" rows="2" maxlength="2000" placeholder="Pontos essenciais do próximo plantão"></textarea></label></div>
+      <section id="pendingSection" class="pending-section"><div class="section-title"><div><h3>Pendências</h3><span id="pendingProgress" class="muted"></span></div><button id="addTemplateButton" class="button ghost small" type="button">Usar modelo</button></div><div id="pendencias" class="pending-list"></div><div class="pending-composer"><input id="novaPend" placeholder="Adicionar pendência…" maxlength="240"><select id="novaPendPriority"><option value="normal">Normal</option><option value="high">Alta</option><option value="low">Baixa</option></select><input id="novaPendDue" type="datetime-local"><select id="novaPendAssignee" aria-label="Responsável pela pendência"><option value="">Sem responsável</option></select><button type="button" data-action="add-pending">Adicionar</button></div></section>
+      <div class="modal-foot"><span id="modalSaveStatus" class="save-status">Preencha os dados</span><div class="actions"><button id="deletePatientButton" class="button danger ghost hidden" type="button">Excluir</button><button id="transferButton" class="button warning hidden" type="button">Transferir</button><button id="dischargeButton" class="button success hidden" type="button">Dar alta</button><button id="savePatientButton" class="button primary" type="submit">Criar paciente</button></div></div>
+    </form>
   </div>
 
-  <div id="loading" class="loading hidden">Sincronizando…</div>
-  <div id="toast" class="toast hidden" role="status"></div>
-  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
-  <script defer src="app.js"></script>
+  <div id="shareModal" class="modal"><div class="modal-panel compact-panel"><div class="modal-head"><div><div class="eyebrow">Equipe</div><h2>Compartilhar sala</h2></div><button class="icon-button" type="button" data-close="shareModal">×</button></div><p class="muted">Compartilhe somente com profissionais autorizados.</p><div id="qrCode" class="qr-code"></div><label>Código da sala<div class="copy-field"><strong id="shareCode"></strong><button id="copyCodeButton" type="button">Copiar</button></div></label><label>Link de convite<div class="copy-field"><input id="shareLink" readonly><button id="copyLinkButton" type="button">Copiar</button></div></label><button id="nativeShareButton" class="button primary" type="button">Compartilhar</button></div></div>
+  <div id="mobileMenu" class="modal"><div class="modal-panel compact-panel sheet"><div class="modal-head"><h2>Menu</h2><button class="icon-button" type="button" data-close="mobileMenu">×</button></div><button class="menu-action" type="button" data-view="auditoria">◷ Atividade da sala</button><button class="menu-action" type="button" data-action="share">⌁ Compartilhar sala</button><button class="menu-action" type="button" data-action="install">⬇ Instalar aplicativo</button><button class="menu-action" type="button" data-action="lock">⌾ Bloquear tela</button><button class="menu-action" type="button" data-action="switch-room">＋ Trocar ou criar sala</button><button class="menu-action danger-text" type="button" data-action="logout">↪ Sair da conta</button></div></div>
+  <div id="lockScreen" class="lock-screen hidden"><form id="unlockForm" class="lock-card glass"><div class="lock-icon">⌾</div><div class="brand-mark brand-small"><span>ER</span>Hub</div><h2>Tela protegida</h2><p class="muted">Digite sua senha para voltar à sala.</p><label>Senha<input id="unlockPassword" type="password" autocomplete="current-password" required></label><button type="submit">Desbloquear</button><button class="link-button" type="button" data-action="logout">Sair da conta</button></form></div>
+  <div id="loading" class="loading hidden"><span></span>Sincronizando</div><div id="offlineBanner" class="offline-banner hidden">Você está offline. As alterações serão enviadas quando a conexão voltar.</div><div id="toast" class="toast hidden" role="status"><span id="toastText"></span><button id="toastAction" class="hidden" type="button"></button></div>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script defer src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script><script defer src="app.js"></script>
 </body>
 </html>
