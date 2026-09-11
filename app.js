@@ -138,10 +138,10 @@ function renderHistory(){const query=$('historySearch').value.trim(),filter=$('h
 function renderHandoff(){const list=activePatients().sort((a,b)=>PRIORITIES.findIndex(x=>x.id===a.priority)-PRIORITIES.findIndex(x=>x.id===b.priority));$('handoff').innerHTML=list.length?list.map(p=>{const open=(p.pending_items||[]).filter(x=>!x.done);return `<article class="handoff-card ${p.priority}"><div class="handoff-head"><div><h3>${escapeHtml(p.bed||'Sem leito')} · ${escapeHtml(p.name||'Sem nome')}</h3><small>${p.age??'—'} anos · ${escapeHtml(p.responsible||'Sem responsável')} · ${elapsed(p.entered_at)} na sala</small></div><span class="status-badge ${p.priority==='red'?'transferred':'discharged'}">${PRIORITIES.find(x=>x.id===p.priority).label}</span></div><p>${escapeHtml(p.diagnosis||'Sem diagnóstico informado')}</p>${p.handoff_notes?`<div class="handoff-notes"><strong>Para o próximo plantão</strong><br>${escapeHtml(p.handoff_notes)}</div>`:''}<strong>${open.length} pendência(s) aberta(s)</strong><ul class="handoff-pending">${open.map(x=>`<li>${escapeHtml(x.title)}${x.due_at?` — ${formatDate(x.due_at)}`:''}</li>`).join('')}</ul></article>`}).join(''):'<div class="empty-lane">Nenhum paciente ativo para a passagem.</div>';}
 
 function newPatient(){patientMode='create';currentPatientId=null;draftPending=DEFAULT_PENDING.map((title,i)=>({id:uuid(),title,done:false,position:i,priority:'normal',due_at:null}));$('patientModalTitle').textContent='Novo paciente';$('patientModalEyebrow').textContent='Admissão segura';['nome','leito','idade','dx','responsavel','handoffNotes'].forEach(id=>$(id).value='');$('prio').value='yellow';$('entrada').value=isoLocal();$('deletePatientButton').classList.add('hidden');$('outcomeButton').classList.add('hidden');$('savePatientButton').classList.remove('hidden');$('savePatientButton').textContent='Criar paciente';$('modalSaveStatus').textContent='Nada será gravado antes de criar';renderPending();openModal('patientModal');setTimeout(()=>$('nome').focus(),80);}
-function openPatient(id){const p=patients.find(x=>x.id===id);if(!p)return;patientMode='edit';currentPatientId=id;$('patientModalTitle').textContent=p.name||'Paciente';$('patientModalEyebrow').textContent=`${p.bed||'Sem leito'} · ${PRIORITIES.find(x=>x.id===p.priority)?.label||''}`;$('nome').value=p.name;$('leito').value=p.bed;$('idade').value=p.age??'';$('dx').value=p.diagnosis;$('responsavel').value=p.responsible;$('prio').value=p.priority;$('entrada').value=isoLocal(p.entered_at);$('handoffNotes').value=p.handoff_notes||'';$('deletePatientButton').classList.remove('hidden');$('outcomeButton').classList.remove('hidden');$('savePatientButton').classList.add('hidden');setSync('Tudo salvo');renderPending();openModal('patientModal');trackEditing(id);}
+function openPatient(id){const p=patients.find(x=>x.id===id);if(!p)return;patientMode='edit';currentPatientId=id;$('patientModalTitle').textContent=p.name||'Paciente';$('patientModalEyebrow').textContent=`${p.bed||'Sem leito'} · ${PRIORITIES.find(x=>x.id===p.priority)?.label||''}`;$('nome').value=p.name;$('leito').value=p.bed;$('idade').value=p.age??'';$('dx').value=p.diagnosis;$('responsavel').value=p.responsible;$('prio').value=p.priority;$('entrada').value=isoLocal(p.entered_at);$('handoffNotes').value=p.handoff_notes||'';$('deletePatientButton').classList.remove('hidden');$('outcomeButton').classList.remove('hidden');$('savePatientButton').classList.remove('hidden');$('savePatientButton').textContent='Salvar alterações';setSync('Tudo salvo');renderPending();openModal('patientModal');trackEditing(id);}
 function renderPending(){const items=patientMode==='create'?draftPending:(patients.find(p=>p.id===currentPatientId)?.pending_items||[]);const done=items.filter(x=>x.done).length;$('pendingProgress').textContent=`${done} de ${items.length} concluídas`;$('pendencias').innerHTML=items.length?items.map(x=>`<div class="pending-item ${x.done?'done':''}" data-pending="${x.id}"><button class="pending-check" type="button" aria-label="Concluir"></button><div><div class="pending-name">${escapeHtml(x.title)}</div><div class="pending-detail ${isOverdue(x)?'late':''}">${x.due_at?(isOverdue(x)?'Vencida · ':'Prazo · ')+formatDate(x.due_at):'Sem prazo'}${x.assignee_name?` · ${escapeHtml(x.assignee_name)}`:''}</div></div>${x.priority==='high'?'<span class="priority-flag">ALTA</span>':'<span></span>'}<button class="trash" type="button" aria-label="Excluir">×</button></div>`).join(''):'<div class="empty-lane">Nenhuma pendência.</div>';document.querySelectorAll('[data-pending]').forEach(row=>{row.querySelector('.pending-check').onclick=()=>togglePending(row.dataset.pending);row.querySelector('.trash').onclick=()=>deletePending(row.dataset.pending);});}
 function formPayload(){return{name:$('nome').value.trim(),bed:$('leito').value.trim(),age:$('idade').value?Number($('idade').value):null,diagnosis:$('dx').value.trim(),responsible:$('responsavel').value.trim(),priority:$('prio').value,entered_at:new Date($('entrada').value||new Date()).toISOString(),handoff_notes:$('handoffNotes').value.trim(),updated_by:session.user.id};}
-async function savePatientForm(e){e.preventDefault();if(patientMode==='edit')return closePatient();const payload=formPayload();if(!payload.name)return toast('Informe o nome do paciente.',true);const id=uuid();const patient={id,room_id:room.id,...payload,status:'active',outcome_at:null,sort_order:activePatients().length,created_by:session.user.id,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),pending_items:draftPending.map(x=>({...x,patient_id:id,room_id:room.id,created_by:session.user.id,updated_by:session.user.id}))};patients.push(patient);renderAll();closePatient();setSync('Salvando…',true);const pResult=await saveMutation('patients','insert',{...patient,pending_items:undefined});if((!pResult.error||!navigator.onLine)&&patient.pending_items.length){const cleanItems=patient.pending_items.map(x=>{const item={...x};delete item.assignee_name;return item;});await saveMutation('pending_items','insert',cleanItems);}setSync(pResult.error?'Na fila para sincronizar':'Tudo salvo');toast('Paciente adicionado.');}
+async function savePatientForm(e){e.preventDefault();if(patientMode==='edit'){const result=await saveCurrentPatient();if(result?.error)return;toast('Alterações salvas.');return closePatient();}const payload=formPayload();if(!payload.name)return toast('Informe o nome do paciente.',true);const id=uuid();const patient={id,room_id:room.id,...payload,status:'active',outcome_at:null,sort_order:activePatients().length,created_by:session.user.id,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),pending_items:draftPending.map(x=>({...x,patient_id:id,room_id:room.id,created_by:session.user.id,updated_by:session.user.id}))};patients.push(patient);renderAll();closePatient();setSync('Salvando…',true);const pResult=await saveMutation('patients','insert',{...patient,pending_items:undefined});if((!pResult.error||!navigator.onLine)&&patient.pending_items.length){const cleanItems=patient.pending_items.map(x=>{const item={...x};delete item.assignee_name;return item;});await saveMutation('pending_items','insert',cleanItems);}setSync(pResult.error?'Na fila para sincronizar':'Tudo salvo');toast('Paciente adicionado.');}
 async function closePatient(){clearTimeout(saveTimer);if(patientMode==='edit'&&patientDirty){const result=await saveCurrentPatient();if(result?.error)return;}if(patientSaving)await patientSaving;$('patientModal').classList.remove('open');document.body.style.overflow='';currentPatientId=null;patientMode='edit';patientDirty=false;if(realtimeChannel&&session)trackEditing(null);}
 function scheduleSave(){if(patientMode!=='edit'||!currentPatientId)return;patientDirty=true;clearTimeout(saveTimer);setSync('Salvando…',true);saveTimer=setTimeout(()=>saveCurrentPatient(),650);}
 async function saveCurrentPatient(){if(patientSaving)await patientSaving;const p=patients.find(x=>x.id===currentPatientId);if(!p||!patientDirty)return {error:null};if(!$('patientForm').reportValidity()||!$('nome').value.trim()||!$('entrada').value){setSync('Revise os dados antes de salvar');return {error:new Error('Dados inválidos')};}const payload=formPayload();patientDirty=false;Object.assign(p,payload);patientSaving=saveMutation('patients','update',payload,{id:p.id,room_id:p.room_id});const result=await patientSaving;patientSaving=null;if(result.error){patientDirty=true;setSync('Falha ao salvar — tente novamente');}else {setSync(getQueue().length?'Aguardando sincronização':'Tudo salvo');renderAll();}return result;}
@@ -164,7 +164,76 @@ function unsubscribeRealtime(){if(realtimeChannel)db.removeChannel(realtimeChann
 function renderPresence(){if(!realtimeChannel)return;const entries=Object.values(realtimeChannel.presenceState()).flat(),count=entries.length;$('presenceText').textContent=`${count} ${count===1?'pessoa':'pessoas'} online`;editingMap={};entries.filter(x=>x.user_id!==session.user.id&&x.editing).forEach(x=>editingMap[x.editing]=x.name||'Alguém');renderBoard();}
 function trackEditing(id){if(realtimeChannel)realtimeChannel.track({user_id:session.user.id,name:session.user.user_metadata?.display_name||'Profissional',editing:id,online_at:new Date().toISOString()});}
 
-async function loadAudit(){if(!room)return;$('auditList').innerHTML='<div class="empty-lane">Carregando atividade…</div>';const {data,error}=await db.from('audit_log').select('*').eq('room_id',room.id).order('occurred_at',{ascending:false}).limit(100);if(error)return $('auditList').innerHTML=`<div class="empty-lane">${escapeHtml(friendlyError(error))}</div>`;auditRows=data||[];const userIds=[...new Set(auditRows.map(x=>x.user_id).filter(Boolean))];let names={};if(userIds.length){const result=await db.from('profiles').select('id,display_name').in('id',userIds);if(!result.error)(result.data||[]).forEach(x=>names[x.id]=x.display_name);}const actions={insert:'adicionou',update:'alterou',delete:'removeu'};$('auditList').innerHTML=auditRows.length?auditRows.map(x=>`<article class="audit-item"><div class="audit-icon">◷</div><div><p><strong>${escapeHtml(names[x.user_id]||'Profissional')}</strong> ${actions[x.action]||x.action} ${x.entity==='patients'?'um paciente':'uma pendência'}.</p><small>${formatDate(x.occurred_at)}</small></div></article>`).join(''):'<div class="empty-lane">Nenhuma atividade registrada.</div>';}
+function auditPatientName(data){
+  const patientId=data?.patient_id||data?.id;
+  return data?.name||patients.find(p=>p.id===patientId)?.name||'paciente';
+}
+function auditMemberName(id){
+  return roomMembers.find(member=>member.user_id===id)?.name||'profissional';
+}
+function auditSummary(row){
+  const before=row.before_data||{},after=row.after_data||{};
+  if(row.entity==='patients'){
+    const name=after.name||before.name||'paciente';
+    const bed=after.bed||before.bed;
+    const target=`${name}${bed?` · leito ${bed}`:''}`;
+    if(row.action==='insert')return `adicionou ${target}`;
+    if(row.action==='delete')return `excluiu ${target}`;
+    if(row.action!=='update')return null;
+    if(before.status!==after.status){
+      if(after.status==='active')return `restaurou ${target} ao painel`;
+      const type=after.outcome_type||(after.status==='discharged'?'discharge':'internal_transfer');
+      return `registrou ${OUTCOMES[type]||'desfecho'} para ${target}`;
+    }
+    const changes=[];
+    if(before.priority!==after.priority){
+      const oldLabel=PRIORITIES.find(x=>x.id===before.priority)?.label||before.priority;
+      const newLabel=PRIORITIES.find(x=>x.id===after.priority)?.label||after.priority;
+      changes.push(`prioridade: ${oldLabel} → ${newLabel}`);
+    }
+    if(before.bed!==after.bed)changes.push(`leito: ${before.bed||'—'} → ${after.bed||'—'}`);
+    if(before.responsible!==after.responsible)changes.push(`responsável: ${before.responsible||'—'} → ${after.responsible||'—'}`);
+    if(before.name!==after.name)changes.push(`nome: ${before.name||'—'} → ${after.name||'—'}`);
+    if(before.age!==after.age)changes.push(`idade: ${before.age??'—'} → ${after.age??'—'}`);
+    if(before.diagnosis!==after.diagnosis)changes.push('atualizou diagnóstico/queixa');
+    if(before.handoff_notes!==after.handoff_notes)changes.push('atualizou notas da passagem');
+    if(before.entered_at!==after.entered_at)changes.push('alterou horário de entrada');
+    return changes.length?`alterou ${target}: ${changes.slice(0,3).join('; ')}${changes.length>3?' e outros dados':''}`:null;
+  }
+  if(row.entity==='pending_items'){
+    const data=row.action==='delete'?before:after;
+    const title=data.title||before.title||'pendência';
+    const patient=auditPatientName(data);
+    if(row.action==='insert')return `adicionou a pendência “${title}” em ${patient}`;
+    if(row.action==='delete')return `removeu a pendência “${title}” de ${patient}`;
+    if(row.action!=='update')return null;
+    if(before.done!==after.done)return `${after.done?'concluiu':'reabriu'} a pendência “${title}” de ${patient}`;
+    const changes=[];
+    if(before.title!==after.title)changes.push(`renomeou para “${after.title}”`);
+    if(before.priority!==after.priority)changes.push(`mudou a prioridade para ${after.priority==='high'?'alta':after.priority==='low'?'baixa':'normal'}`);
+    if(before.due_at!==after.due_at)changes.push(after.due_at?'alterou o prazo':'removeu o prazo');
+    if(before.assigned_to!==after.assigned_to)changes.push(after.assigned_to?`atribuiu a ${auditMemberName(after.assigned_to)}`:'removeu o responsável');
+    return changes.length?`alterou a pendência “${title}” de ${patient}: ${changes.join('; ')}`:null;
+  }
+  return null;
+}
+async function loadAudit(){
+  if(!room)return;
+  $('auditList').innerHTML='<div class="empty-lane">Carregando atividade…</div>';
+  const {data,error}=await db.from('audit_log').select('*').eq('room_id',room.id).order('occurred_at',{ascending:false}).limit(100);
+  if(error)return $('auditList').innerHTML=`<div class="empty-lane">${escapeHtml(friendlyError(error))}</div>`;
+  const rows=(data||[]);
+  const userIds=[...new Set(rows.map(x=>x.user_id).filter(Boolean))];
+  const names={};
+  if(userIds.length){
+    const result=await db.from('profiles').select('id,display_name').in('id',userIds);
+    if(!result.error)(result.data||[]).forEach(x=>names[x.id]=x.display_name);
+  }
+  auditRows=rows.map(row=>({row,summary:auditSummary(row)})).filter(x=>x.summary);
+  $('auditList').innerHTML=auditRows.length
+    ?auditRows.map(({row,summary})=>`<article class="audit-item"><div class="audit-icon">◷</div><div><p><strong>${escapeHtml(names[row.user_id]||'Profissional')}</strong> ${escapeHtml(summary)}.</p><small>${formatDate(row.occurred_at)}</small></div></article>`).join('')
+    :'<div class="empty-lane">Nenhuma atividade registrada.</div>';
+}
 function showView(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===id));if(id==='historico')renderHistory();if(id==='passagem')renderHandoff();if(id==='auditoria')loadAudit();window.scrollTo({top:0,behavior:'smooth'});}
 
 function showShare(){if(!room)return;$('shareCode').textContent=room.invite_code;const link=`${location.origin}${location.pathname}?room=${encodeURIComponent(room.invite_code)}`;$('shareLink').value=link;$('qrCode').innerHTML='';if(window.QRCode)new QRCode($('qrCode'),{text:link,width:160,height:160,colorDark:'#07111f',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});openModal('shareModal');}
