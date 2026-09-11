@@ -1,425 +1,156 @@
 const SUPABASE_URL = 'https://khchcksxxkquzxoglbww.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_X3VrmhaoZ948g13Rl7_Amg_n-71c2Fb';
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
 const $ = (id) => document.getElementById(id);
 const DEFAULT_PENDING = ['Admissão', 'Prescrever', 'Laboratoriais', 'Checar exames', 'Reavaliar'];
-let session = null;
-let rooms = [];
-let room = null;
-let patients = [];
-let currentPatientId = null;
-let realtimeChannel = null;
-let sortableInstance = null;
-let saveTimer = null;
-let toastTimer = null;
-let loadingCount = 0;
+const PRIORITIES = [{ id: 'red', label: 'Críticos' }, { id: 'yellow', label: 'Urgentes' }, { id: 'green', label: 'Estáveis' }];
 
-function escapeHtml(value = '') {
-  return String(value).replace(/[&<>'"]/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  })[char]);
-}
+let session = null, rooms = [], room = null, patients = [], roomMembers = [], currentPatientId = null;
+let patientMode = 'edit', draftPending = [], realtimeChannel = null, saveTimer = null, toastTimer = null;
+let loadingCount = 0, activeFilter = 'all', deferredPrompt = null, presenceKey = null, inactivityTimer = null;
+let deleteTimer = null, lastSyncAt = null, auditRows = [], editingMap = {};
 
-function setLoading(active) {
-  loadingCount = Math.max(0, loadingCount + (active ? 1 : -1));
-  $('loading').classList.toggle('hidden', loadingCount === 0);
+function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' })[c]); }
+function uuid() { return crypto.randomUUID(); }
+function isoLocal(value = new Date()) { const d = new Date(value); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); }
+function isOverdue(item) { return !item.done && item.due_at && new Date(item.due_at) < new Date(); }
+function roomCacheKey() { return `erhub_snapshot_${room?.id || 'none'}`; }
+function setLoading(active) { loadingCount = Math.max(0, loadingCount + (active ? 1 : -1)); $('loading').classList.toggle('hidden', loadingCount === 0); }
+function setSync(text, saving = false) { $('syncStatus').textContent = text; $('syncStatus').classList.toggle('saving', saving); $('modalSaveStatus').textContent = text; }
+function friendlyError(error) { const message = error?.message || String(error || 'Erro inesperado'); return ({'Invalid login credentials':'E-mail ou senha incorretos.','Email not confirmed':'Confirme seu e-mail antes de entrar.','User already registered':'Este e-mail já possui uma conta.','Invalid invite code':'Código de convite inválido.','Failed to fetch':'Sem conexão. A alteração será sincronizada depois.'})[message] || message; }
+function toast(message, isError = false, action = null) {
+  clearTimeout(toastTimer); $('toastText').textContent = message; $('toast').className = `toast${isError ? ' error' : ''}`;
+  const button = $('toastAction'); button.classList.toggle('hidden', !action); button.textContent = action?.label || ''; button.onclick = action?.run || null;
+  toastTimer = setTimeout(() => $('toast').classList.add('hidden'), action ? 6500 : 4200);
 }
-
-function toast(message, isError = false) {
-  clearTimeout(toastTimer);
-  $('toast').textContent = message;
-  $('toast').className = `toast${isError ? ' error' : ''}`;
-  toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 4500);
-}
-
-function friendlyError(error) {
-  const message = error?.message || String(error || 'Erro inesperado');
-  const map = {
-    'Invalid login credentials': 'E-mail ou senha incorretos.',
-    'Email not confirmed': 'Confirme seu e-mail antes de entrar.',
-    'User already registered': 'Este e-mail já possui uma conta.',
-    'Invalid invite code': 'Código de convite inválido.'
-  };
-  return map[message] || message;
-}
-
-function showOnly(viewId) {
-  ['authView', 'workspaceView', 'appView'].forEach((id) => $(id).classList.toggle('hidden', id !== viewId));
-}
-
-function showAuthForm(name) {
-  const forms = { login: 'loginForm', signup: 'signupForm', recovery: 'recoveryForm', password: 'newPasswordForm' };
-  Object.values(forms).forEach((id) => $(id).classList.add('hidden'));
-  $(forms[name]).classList.remove('hidden');
-  $('showLogin').classList.toggle('hidden', name === 'login');
-  $('showSignup').classList.toggle('hidden', name === 'signup' || name === 'password');
-  $('showRecovery').classList.toggle('hidden', name === 'recovery' || name === 'password');
-}
-
-async function handleSession(nextSession) {
-  session = nextSession;
-  if (!session) {
-    unsubscribeRealtime();
-    rooms = [];
-    room = null;
-    patients = [];
-    showOnly('authView');
-    showAuthForm('login');
-    return;
-  }
-  await loadRooms();
-}
+function showOnly(viewId) { ['authView','workspaceView','appView'].forEach(id => $(id).classList.toggle('hidden', id !== viewId)); }
+function openModal(id) { $(id).classList.add('open'); document.body.style.overflow = 'hidden'; }
+function closeModal(id) { $(id).classList.remove('open'); if (!document.querySelector('.modal.open')) document.body.style.overflow = ''; }
+function showAuthForm(name) { const forms={login:'loginForm',signup:'signupForm',recovery:'recoveryForm',password:'newPasswordForm'}; Object.values(forms).forEach(id=>$(id).classList.add('hidden')); $(forms[name]).classList.remove('hidden'); $('showLogin').classList.toggle('hidden',name==='login'); $('showSignup').classList.toggle('hidden',name==='signup'||name==='password'); $('showRecovery').classList.toggle('hidden',name==='recovery'||name==='password'); }
 
 async function init() {
-  bindEvents();
-  const { data } = await db.auth.getSession();
-  await handleSession(data.session);
+  bindEvents(); updateNetworkState(); registerPwa();
+  const { data } = await db.auth.getSession(); await handleSession(data.session);
   db.auth.onAuthStateChange((event, nextSession) => {
-    if (event === 'PASSWORD_RECOVERY') {
-      session = nextSession;
-      showOnly('authView');
-      showAuthForm('password');
-    } else if (event === 'SIGNED_OUT') {
-      handleSession(null);
-    } else if (event === 'SIGNED_IN' && nextSession?.user?.id !== session?.user?.id) {
-      handleSession(nextSession);
-    }
+    if (event === 'PASSWORD_RECOVERY') { session=nextSession; showOnly('authView'); showAuthForm('password'); }
+    else if (event === 'SIGNED_OUT') handleSession(null);
+    else if (event === 'SIGNED_IN' && nextSession?.user?.id !== session?.user?.id) handleSession(nextSession);
   });
 }
 
 function bindEvents() {
-  $('showLogin').onclick = () => showAuthForm('login');
-  $('showSignup').onclick = () => showAuthForm('signup');
-  $('showRecovery').onclick = () => showAuthForm('recovery');
-  $('loginForm').onsubmit = login;
-  $('signupForm').onsubmit = signup;
-  $('recoveryForm').onsubmit = recoverPassword;
-  $('newPasswordForm').onsubmit = updatePassword;
-  $('createRoomForm').onsubmit = createRoom;
-  $('joinRoomForm').onsubmit = joinRoom;
-  $('roomSelect').onchange = () => selectRoom($('roomSelect').value);
-  $('inviteButton').onclick = copyInvite;
-  $('novaPend').onkeydown = (event) => { if (event.key === 'Enter') { event.preventDefault(); addPend(); } };
-  ['nome', 'leito', 'idade', 'dx', 'responsavel', 'prio', 'entrada'].forEach((id) => {
-    $(id).addEventListener(id === 'prio' || id === 'entrada' ? 'change' : 'input', scheduleSave);
-  });
-  $('patientModal').onclick = (event) => { if (event.target === $('patientModal')) fecharPaciente(); };
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') fecharPaciente();
-  });
+  $('showLogin').onclick=()=>showAuthForm('login'); $('showSignup').onclick=()=>showAuthForm('signup'); $('showRecovery').onclick=()=>showAuthForm('recovery');
+  $('loginForm').onsubmit=login; $('signupForm').onsubmit=signup; $('recoveryForm').onsubmit=recoverPassword; $('newPasswordForm').onsubmit=updatePassword;
+  $('createRoomForm').onsubmit=createRoom; $('joinRoomForm').onsubmit=joinRoom; $('roomSelect').onchange=()=>selectRoom($('roomSelect').value);
+  $('searchInput').oninput=renderBoard; $('historySearch').oninput=renderHistory; $('historyFilter').onchange=renderHistory;
+  $('priorityFilters').onclick=e=>{ const b=e.target.closest('[data-filter]'); if(!b)return; activeFilter=b.dataset.filter; document.querySelectorAll('[data-filter]').forEach(x=>x.classList.toggle('active',x===b)); renderBoard(); };
+  $('patientForm').onsubmit=savePatientForm; $('novaPend').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();addPending();}};
+  $('deletePatientButton').onclick=()=>deletePatient(currentPatientId); $('transferButton').onclick=()=>setOutcome('transferred'); $('dischargeButton').onclick=()=>setOutcome('discharged');
+  $('addTemplateButton').onclick=addDefaultPending; $('shareButton').onclick=showShare; $('copyCodeButton').onclick=()=>copyText(room.invite_code,'Código copiado.'); $('copyLinkButton').onclick=()=>copyText($('shareLink').value,'Link copiado.'); $('nativeShareButton').onclick=nativeShare;
+  $('refreshAudit').onclick=loadAudit; $('unlockForm').onsubmit=unlock;
+  document.addEventListener('click', handleActionClick);
+  document.addEventListener('input', e=>{ if(['nome','leito','idade','dx','responsavel','handoffNotes'].includes(e.target.id)) scheduleSave(); resetInactivity(); });
+  document.addEventListener('change', e=>{ if(['prio','entrada'].includes(e.target.id)) scheduleSave(); resetInactivity(); });
+  document.addEventListener('keydown', e=>{ resetInactivity(); if(e.key==='Escape'){document.querySelectorAll('.modal.open').forEach(m=>closeModal(m.id));} });
+  window.addEventListener('online', async()=>{updateNetworkState();await flushQueue();if(room)await loadPatients();}); window.addEventListener('offline',updateNetworkState);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&room)loadPatients();});
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;$('installAuth').classList.remove('hidden');});
 }
 
-async function login(event) {
-  event.preventDefault();
-  setLoading(true);
-  const { error } = await db.auth.signInWithPassword({ email: $('loginEmail').value.trim(), password: $('loginPassword').value });
-  setLoading(false);
-  if (error) toast(friendlyError(error), true);
+function handleActionClick(event) {
+  const close=event.target.closest('[data-close]'); if(close)return closeModal(close.dataset.close);
+  const view=event.target.closest('[data-view]'); if(view){showView(view.dataset.view);closeModal('mobileMenu');return;}
+  const action=event.target.closest('[data-action]')?.dataset.action;
+  if(action==='logout')logout(); if(action==='switch-room'){closeModal('mobileMenu');showOnly('workspaceView');} if(action==='new-patient')newPatient();
+  if(action==='print')window.print(); if(action==='mobile-menu')openModal('mobileMenu'); if(action==='share'){closeModal('mobileMenu');showShare();}
+  if(action==='install')installPwa(); if(action==='lock'){closeModal('mobileMenu');lock();} if(action==='add-pending')addPending();
+  const peek=event.target.closest('.peek'); if(peek){const input=$(peek.dataset.target);input.type=input.type==='password'?'text':'password';}
 }
 
-async function signup(event) {
-  event.preventDefault();
-  setLoading(true);
-  const { data, error } = await db.auth.signUp({
-    email: $('signupEmail').value.trim(),
-    password: $('signupPassword').value,
-    options: { data: { display_name: $('signupName').value.trim() }, emailRedirectTo: location.origin }
-  });
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  if (data.session) await handleSession(data.session);
-  else toast('Não foi possível iniciar o acesso. Tente entrar com sua conta.', true);
+async function handleSession(nextSession) {
+  session=nextSession;
+  if(!session){unsubscribeRealtime();rooms=[];room=null;patients=[];showOnly('authView');showAuthForm('login');return;}
+  presenceKey=`${session.user.id}-${Math.random().toString(36).slice(2,7)}`; await loadRooms(); resetInactivity();
 }
-
-async function recoverPassword(event) {
-  event.preventDefault();
-  setLoading(true);
-  const { error } = await db.auth.resetPasswordForEmail($('recoveryEmail').value.trim(), { redirectTo: location.origin });
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  toast('Enviamos o link de recuperação para seu e-mail.');
-  showAuthForm('login');
-}
-
-async function updatePassword(event) {
-  event.preventDefault();
-  setLoading(true);
-  const { error } = await db.auth.updateUser({ password: $('newPassword').value });
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  toast('Senha atualizada.');
-  await handleSession((await db.auth.getSession()).data.session);
-}
-
-async function logout() {
-  await db.auth.signOut();
-}
+async function login(e){e.preventDefault();setLoading(true);const {error}=await db.auth.signInWithPassword({email:$('loginEmail').value.trim(),password:$('loginPassword').value});setLoading(false);if(error)toast(friendlyError(error),true);}
+async function signup(e){e.preventDefault();setLoading(true);const {data,error}=await db.auth.signUp({email:$('signupEmail').value.trim(),password:$('signupPassword').value,options:{data:{display_name:$('signupName').value.trim()},emailRedirectTo:location.origin}});setLoading(false);if(error)return toast(friendlyError(error),true);if(data.session)await handleSession(data.session);else toast('Conta criada. Entre com seu e-mail e senha.');}
+async function recoverPassword(e){e.preventDefault();setLoading(true);const {error}=await db.auth.resetPasswordForEmail($('recoveryEmail').value.trim(),{redirectTo:location.origin});setLoading(false);if(error)return toast(friendlyError(error),true);toast('Enviamos o link de recuperação.');showAuthForm('login');}
+async function updatePassword(e){e.preventDefault();setLoading(true);const {error}=await db.auth.updateUser({password:$('newPassword').value});setLoading(false);if(error)return toast(friendlyError(error),true);toast('Senha atualizada.');await handleSession((await db.auth.getSession()).data.session);}
+async function logout(){clearTimeout(inactivityTimer);await db.auth.signOut();}
 
 async function loadRooms(preferredId) {
-  setLoading(true);
-  const { data, error } = await db.from('room_members').select('room_id, role, rooms(id,name,invite_code)').eq('user_id', session.user.id);
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  rooms = (data || []).map((item) => ({ ...(Array.isArray(item.rooms) ? item.rooms[0] : item.rooms), role: item.role })).filter((item) => item.id);
-  if (!rooms.length) {
-    room = null;
-    showOnly('workspaceView');
-    return;
-  }
-  const saved = preferredId || localStorage.getItem('erhub_room');
-  await selectRoom(rooms.some((item) => item.id === saved) ? saved : rooms[0].id);
+  setLoading(true); const {data,error}=await db.from('room_members').select('room_id,role,rooms(id,name,invite_code)').eq('user_id',session.user.id); setLoading(false);
+  if(error)return toast(friendlyError(error),true); rooms=(data||[]).map(x=>({...([].concat(x.rooms||[])[0]),role:x.role})).filter(x=>x.id);
+  const invite=new URLSearchParams(location.search).get('room');
+  if(invite&&!rooms.some(r=>r.invite_code===invite.toUpperCase())){const joined=await db.rpc('join_room',{invite_code_input:invite.toUpperCase()});if(!joined.error){history.replaceState({},'',location.pathname);return loadRooms(joined.data);}}
+  if(!rooms.length){room=null;showOnly('workspaceView');return;} const saved=preferredId||localStorage.getItem('erhub_room');await selectRoom(rooms.some(x=>x.id===saved)?saved:rooms[0].id);
 }
+async function createRoom(e){e.preventDefault();setLoading(true);const {data,error}=await db.rpc('create_room',{room_name:$('roomName').value.trim()});setLoading(false);if(error)return toast(friendlyError(error),true);$('roomName').value='';await loadRooms(data?.[0]?.created_room_id);toast('Sala criada.');}
+async function joinRoom(e){e.preventDefault();setLoading(true);const {data,error}=await db.rpc('join_room',{invite_code_input:$('inviteCode').value.trim().toUpperCase()});setLoading(false);if(error)return toast(friendlyError(error),true);$('inviteCode').value='';await loadRooms(data);toast('Você entrou na sala.');}
+async function selectRoom(id){const selected=rooms.find(x=>x.id===id);if(!selected)return;room=selected;localStorage.setItem('erhub_room',room.id);$('roomSelect').innerHTML=rooms.map(x=>`<option value="${x.id}"${x.id===room.id?' selected':''}>${escapeHtml(x.name)}</option>`).join('');showOnly('appView');await loadRoomMembers();await loadPatients();subscribeRealtime();}
 
-async function createRoom(event) {
-  event.preventDefault();
-  setLoading(true);
-  const { data, error } = await db.rpc('create_room', { room_name: $('roomName').value.trim() });
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  $('roomName').value = '';
-  await loadRooms(data?.[0]?.created_room_id);
-  toast('Sala criada. Compartilhe o código somente com a equipe autorizada.');
-}
-
-async function joinRoom(event) {
-  event.preventDefault();
-  setLoading(true);
-  const { data, error } = await db.rpc('join_room', { invite_code_input: $('inviteCode').value.trim().toUpperCase() });
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  $('inviteCode').value = '';
-  await loadRooms(data);
-  toast('Você entrou na sala.');
-}
-
-async function selectRoom(id) {
-  const selected = rooms.find((item) => item.id === id);
-  if (!selected) return;
-  room = selected;
-  localStorage.setItem('erhub_room', room.id);
-  $('roomSelect').innerHTML = rooms.map((item) => `<option value="${escapeHtml(item.id)}"${item.id === room.id ? ' selected' : ''}>${escapeHtml(item.name)}</option>`).join('');
-  $('inviteButton').textContent = `Código: ${room.invite_code}`;
-  showOnly('appView');
-  await loadPatients();
-  subscribeRealtime();
-}
-
-function trocarSala() { showOnly('workspaceView'); }
-
-async function copyInvite() {
-  try { await navigator.clipboard.writeText(room.invite_code); toast('Código copiado.'); }
-  catch { toast(`Código da sala: ${room.invite_code}`); }
-}
+async function loadRoomMembers(){const members=await db.from('room_members').select('user_id,role').eq('room_id',room.id);if(members.error)return;const ids=(members.data||[]).map(x=>x.user_id);const profiles=ids.length?await db.from('profiles').select('id,display_name').in('id',ids):{data:[]};const names={};(profiles.data||[]).forEach(x=>names[x.id]=x.display_name);roomMembers=(members.data||[]).map(x=>({...x,name:names[x.user_id]||'Profissional'}));$('novaPendAssignee').innerHTML='<option value="">Sem responsável</option>'+roomMembers.map(x=>`<option value="${x.user_id}">${escapeHtml(x.name)}</option>`).join('');}
 
 async function loadPatients() {
-  if (!room) return;
-  setLoading(true);
-  const { data, error } = await db.from('patients').select('*, pending_items(*)').eq('room_id', room.id).order('sort_order').order('created_at');
-  setLoading(false);
-  if (error) return toast(friendlyError(error), true);
-  patients = (data || []).map((patient) => ({
-    ...patient,
-    pending_items: (patient.pending_items || []).sort((a, b) => a.position - b.position)
-  }));
-  render();
-  renderHistory();
-  if (currentPatientId && $('patientModal').classList.contains('open')) renderPending();
+  if(!room)return; setLoading(true); const {data,error}=await db.from('patients').select('*,pending_items(*)').eq('room_id',room.id).order('sort_order').order('created_at'); setLoading(false);
+  if(error){const cached=localStorage.getItem(roomCacheKey());if(cached){patients=JSON.parse(cached);renderAll();toast('Exibindo a última versão salva neste aparelho.');}else toast(friendlyError(error),true);return;}
+  const names=Object.fromEntries(roomMembers.map(x=>[x.user_id,x.name]));patients=(data||[]).map(p=>({...p,updated_by_name:names[p.updated_by]||'Profissional',pending_items:(p.pending_items||[]).sort((a,b)=>a.position-b.position).map(x=>({...x,assignee_name:names[x.assigned_to]||''}))}));localStorage.setItem(roomCacheKey(),JSON.stringify(patients));lastSyncAt=new Date();setSync('Tudo salvo');renderAll();
+  if(currentPatientId&&$('patientModal').classList.contains('open'))renderPending();
 }
+function renderAll(){renderKpis();renderBoard();renderHistory();renderHandoff();$('lastSync').textContent=lastSyncAt?'Atualizado agora':'Versão salva no aparelho';}
+function activePatients(){return patients.filter(p=>p.status==='active');}
+function elapsed(value){const m=Math.floor((Date.now()-new Date(value).getTime())/60000);if(!Number.isFinite(m)||m<0)return'—';const h=Math.floor(m/60);return h>=24?`${Math.floor(h/24)}d ${h%24}h`:h?`${h}h ${m%60}min`:`${m}min`;}
+function formatDate(value){return value?new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'short'}).format(new Date(value)):'—';}
+function patientMatches(p,query){return [p.name,p.bed,p.diagnosis,p.responsible].join(' ').toLowerCase().includes(query.toLowerCase());}
 
-function subscribeRealtime() {
-  unsubscribeRealtime();
-  realtimeChannel = db.channel(`room-${room.id}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'patients', filter: `room_id=eq.${room.id}` }, loadPatients)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_items', filter: `room_id=eq.${room.id}` }, loadPatients)
-    .subscribe();
-}
+function renderKpis(){const list=activePatients(),critical=list.filter(p=>p.priority==='red').length,late=list.flatMap(p=>p.pending_items||[]).filter(isOverdue).length,longest=list.sort((a,b)=>new Date(a.entered_at)-new Date(b.entered_at))[0];$('kpis').innerHTML=`<article class="kpi"><span class="kpi-label">Pacientes ativos</span><strong>${list.length}</strong><small>na sala agora</small></article><article class="kpi alert"><span class="kpi-label">Críticos</span><strong>${critical}</strong><small>prioridade máxima</small></article><article class="kpi warn"><span class="kpi-label">Pendências vencidas</span><strong>${late}</strong><small>precisam de atenção</small></article><article class="kpi"><span class="kpi-label">Maior permanência</span><strong>${longest?elapsed(longest.entered_at):'—'}</strong><small>${longest?escapeHtml(longest.name):'sala vazia'}</small></article>`;}
+function renderBoard(){const query=$('searchInput').value.trim();let list=activePatients().filter(p=>patientMatches(p,query));if(activeFilter==='overdue')list=list.filter(p=>(p.pending_items||[]).some(isOverdue));else if(activeFilter!=='all')list=list.filter(p=>p.priority===activeFilter);$('board').innerHTML=PRIORITIES.map(pr=>{const lane=list.filter(p=>p.priority===pr.id);return `<section class="lane" data-priority="${pr.id}"><div class="lane-head"><div class="lane-title"><i></i>${pr.label}</div><span class="lane-count">${lane.length}</span></div><div class="lane-body" data-priority="${pr.id}">${lane.length?lane.map(patientCard).join(''):'<div class="empty-lane">Nenhum paciente nesta prioridade</div>'}</div></section>`}).join('');bindCards();initSortables();}
+function patientCard(p){const items=p.pending_items||[],done=items.filter(x=>x.done).length,late=items.filter(isOverdue).length,progress=items.length?Math.round(done/items.length*100):100,editing=editingMap[p.id];return `<article class="patient-card${late?' overdue':''}" data-id="${p.id}"><div class="card-top"><div class="bed-badge">${escapeHtml(p.bed||'—')}</div><div class="card-title"><strong>${escapeHtml(p.name||'Sem nome')}</strong><small>${p.age??'—'} anos${p.responsible?` · ${escapeHtml(p.responsible)}`:''}</small></div><button class="drag-handle" type="button" aria-label="Mover">⠿</button></div><div class="card-diagnosis">${escapeHtml(p.diagnosis||'Sem diagnóstico informado')}</div><div class="card-meta"><span class="meta-pill">⏱ ${elapsed(p.entered_at)}</span>${late?`<span class="meta-pill" style="color:var(--red)">⚠ ${late} em atraso</span>`:''}${editing?`<span class="meta-pill" style="color:var(--cyan)">${escapeHtml(editing)} editando</span>`:`<span class="meta-pill">por ${escapeHtml(p.updated_by_name||'Profissional')}</span>`}</div><div class="pending-summary"><div class="progress-line"><i style="width:${progress}%"></i></div><div class="pending-summary-row"><span>${done}/${items.length} pendências</span><span>${progress}%</span></div></div><div class="quick-actions"><button data-quick="pending">＋ Pendência</button><button data-quick="discharge">Dar alta</button></div></article>`;}
+function bindCards(){document.querySelectorAll('.patient-card').forEach(card=>{card.onclick=()=>openPatient(card.dataset.id);card.querySelectorAll('[data-quick]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();if(btn.dataset.quick==='pending'){openPatient(card.dataset.id);setTimeout(()=>$('novaPend').focus(),80);}else setOutcome('discharged',card.dataset.id);});});}
+function initSortables(){if(!window.Sortable)return;document.querySelectorAll('.lane-body').forEach(lane=>new Sortable(lane,{group:'patients',handle:'.drag-handle',animation:160,onEnd:async e=>{const id=e.item.dataset.id,priority=e.to.dataset.priority;const ids=[...e.to.querySelectorAll('.patient-card')].map(x=>x.dataset.id);const p=patients.find(x=>x.id===id);if(p)p.priority=priority;renderKpis();await Promise.all(ids.map((patientId,i)=>saveMutation('patients','update',{priority,sort_order:i,updated_by:session.user.id},{id:patientId,room_id:room.id})));}}));}
 
-function unsubscribeRealtime() {
-  if (realtimeChannel) db.removeChannel(realtimeChannel);
-  realtimeChannel = null;
-}
+function renderHistory(){const query=$('historySearch').value.trim(),filter=$('historyFilter').value;const list=patients.filter(p=>p.status!=='active'&&(filter==='all'||p.status===filter)&&patientMatches(p,query)).sort((a,b)=>new Date(b.outcome_at)-new Date(a.outcome_at));$('history').innerHTML=list.length?list.map(p=>`<article class="history-item"><div class="history-main"><h3>${escapeHtml(p.name||'Sem nome')} <span class="muted">· ${escapeHtml(p.bed||'sem leito')}</span></h3><div class="history-meta">${escapeHtml(p.diagnosis||'Sem diagnóstico')} · Entrada ${formatDate(p.entered_at)} · Desfecho ${formatDate(p.outcome_at)}</div></div><div><span class="status-badge ${p.status}">${p.status==='discharged'?'Alta':'Transferência'}</span><button class="restore-button" data-restore="${p.id}">Restaurar</button></div></article>`).join(''):'<div class="empty-lane">Nenhum paciente encontrado no histórico.</div>';document.querySelectorAll('[data-restore]').forEach(b=>b.onclick=()=>restorePatient(b.dataset.restore));}
+function renderHandoff(){const list=activePatients().sort((a,b)=>PRIORITIES.findIndex(x=>x.id===a.priority)-PRIORITIES.findIndex(x=>x.id===b.priority));$('handoff').innerHTML=list.length?list.map(p=>{const open=(p.pending_items||[]).filter(x=>!x.done);return `<article class="handoff-card ${p.priority}"><div class="handoff-head"><div><h3>${escapeHtml(p.bed||'Sem leito')} · ${escapeHtml(p.name||'Sem nome')}</h3><small>${p.age??'—'} anos · ${escapeHtml(p.responsible||'Sem responsável')} · ${elapsed(p.entered_at)} na sala</small></div><span class="status-badge ${p.priority==='red'?'transferred':'discharged'}">${PRIORITIES.find(x=>x.id===p.priority).label}</span></div><p>${escapeHtml(p.diagnosis||'Sem diagnóstico informado')}</p>${p.handoff_notes?`<div class="handoff-notes"><strong>Para o próximo plantão</strong><br>${escapeHtml(p.handoff_notes)}</div>`:''}<strong>${open.length} pendência(s) aberta(s)</strong><ul class="handoff-pending">${open.map(x=>`<li>${escapeHtml(x.title)}${x.due_at?` — ${formatDate(x.due_at)}`:''}</li>`).join('')}</ul></article>`}).join(''):'<div class="empty-lane">Nenhum paciente ativo para a passagem.</div>';}
 
-function showView(id) {
-  document.querySelectorAll('.view').forEach((node) => node.classList.remove('active'));
-  $(id).classList.add('active');
-  if (id === 'historico') renderHistory();
-}
+function newPatient(){patientMode='create';currentPatientId=null;draftPending=DEFAULT_PENDING.map((title,i)=>({id:uuid(),title,done:false,position:i,priority:'normal',due_at:null}));$('patientModalTitle').textContent='Novo paciente';$('patientModalEyebrow').textContent='Admissão segura';['nome','leito','idade','dx','responsavel','handoffNotes'].forEach(id=>$(id).value='');$('prio').value='yellow';$('entrada').value=isoLocal();$('deletePatientButton').classList.add('hidden');$('transferButton').classList.add('hidden');$('dischargeButton').classList.add('hidden');$('savePatientButton').classList.remove('hidden');$('savePatientButton').textContent='Criar paciente';$('modalSaveStatus').textContent='Nada será gravado antes de criar';renderPending();openModal('patientModal');setTimeout(()=>$('nome').focus(),80);}
+function openPatient(id){const p=patients.find(x=>x.id===id);if(!p)return;patientMode='edit';currentPatientId=id;$('patientModalTitle').textContent=p.name||'Paciente';$('patientModalEyebrow').textContent=`${p.bed||'Sem leito'} · ${PRIORITIES.find(x=>x.id===p.priority)?.label||''}`;$('nome').value=p.name;$('leito').value=p.bed;$('idade').value=p.age??'';$('dx').value=p.diagnosis;$('responsavel').value=p.responsible;$('prio').value=p.priority;$('entrada').value=isoLocal(p.entered_at);$('handoffNotes').value=p.handoff_notes||'';$('deletePatientButton').classList.remove('hidden');$('transferButton').classList.remove('hidden');$('dischargeButton').classList.remove('hidden');$('savePatientButton').classList.add('hidden');setSync('Tudo salvo');renderPending();openModal('patientModal');trackEditing(id);}
+function renderPending(){const items=patientMode==='create'?draftPending:(patients.find(p=>p.id===currentPatientId)?.pending_items||[]);const done=items.filter(x=>x.done).length;$('pendingProgress').textContent=`${done} de ${items.length} concluídas`;$('pendencias').innerHTML=items.length?items.map(x=>`<div class="pending-item ${x.done?'done':''}" data-pending="${x.id}"><button class="pending-check" type="button" aria-label="Concluir"></button><div><div class="pending-name">${escapeHtml(x.title)}</div><div class="pending-detail ${isOverdue(x)?'late':''}">${x.due_at?(isOverdue(x)?'Vencida · ':'Prazo · ')+formatDate(x.due_at):'Sem prazo'}${x.assignee_name?` · ${escapeHtml(x.assignee_name)}`:''}</div></div>${x.priority==='high'?'<span class="priority-flag">ALTA</span>':'<span></span>'}<button class="trash" type="button" aria-label="Excluir">×</button></div>`).join(''):'<div class="empty-lane">Nenhuma pendência.</div>';document.querySelectorAll('[data-pending]').forEach(row=>{row.querySelector('.pending-check').onclick=()=>togglePending(row.dataset.pending);row.querySelector('.trash').onclick=()=>deletePending(row.dataset.pending);});}
+function formPayload(){return{name:$('nome').value.trim(),bed:$('leito').value.trim(),age:$('idade').value?Number($('idade').value):null,diagnosis:$('dx').value.trim(),responsible:$('responsavel').value.trim(),priority:$('prio').value,entered_at:new Date($('entrada').value).toISOString(),handoff_notes:$('handoffNotes').value.trim(),updated_by:session.user.id};}
+async function savePatientForm(e){e.preventDefault();if(patientMode==='edit')return closePatient();const payload=formPayload();if(!payload.name)return toast('Informe o nome do paciente.',true);const id=uuid();const patient={id,room_id:room.id,...payload,status:'active',outcome_at:null,sort_order:activePatients().length,created_by:session.user.id,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),pending_items:draftPending.map(x=>({...x,patient_id:id,room_id:room.id,created_by:session.user.id,updated_by:session.user.id}))};patients.push(patient);renderAll();closePatient();setSync('Salvando…',true);const pResult=await saveMutation('patients','insert',{...patient,pending_items:undefined});if(!pResult.error&&patient.pending_items.length)await saveMutation('pending_items','insert',patient.pending_items);setSync(pResult.error?'Na fila para sincronizar':'Tudo salvo');toast('Paciente adicionado.');}
+function closePatient(){clearTimeout(saveTimer);closeModal('patientModal');currentPatientId=null;patientMode='edit';}
+function scheduleSave(){if(patientMode!=='edit'||!currentPatientId)return;clearTimeout(saveTimer);setSync('Salvando…',true);saveTimer=setTimeout(saveCurrentPatient,650);}
+async function saveCurrentPatient(){const p=patients.find(x=>x.id===currentPatientId);if(!p)return;const payload=formPayload();Object.assign(p,payload);renderKpis();const result=await saveMutation('patients','update',payload,{id:p.id,room_id:room.id});setSync(result.error?'Na fila para sincronizar':'Tudo salvo');if(!result.error){lastSyncAt=new Date();renderBoard();renderHandoff();}}
+function addDefaultPending(){const current=patientMode==='create'?draftPending:(patients.find(p=>p.id===currentPatientId)?.pending_items||[]);const existing=new Set(current.map(x=>x.title));DEFAULT_PENDING.filter(x=>!existing.has(x)).forEach((title,i)=>addPendingItemObject(title,'normal',null,current.length+i));renderPending();}
+function addPending(){const title=$('novaPend').value.trim();if(!title)return;addPendingItemObject(title,$('novaPendPriority').value,$('novaPendDue').value||null,null,$('novaPendAssignee').value||null);$('novaPend').value='';$('novaPendDue').value='';$('novaPendAssignee').value='';renderPending();}
+async function addPendingItemObject(title,priority='normal',due=null,position=null,assignedTo=null){const member=roomMembers.find(x=>x.user_id===assignedTo);const item={id:uuid(),title,priority,due_at:due?new Date(due).toISOString():null,assigned_to:assignedTo,assignee_name:member?.name||'',done:false,position:position??0};if(patientMode==='create'){item.position=position??draftPending.length;draftPending.push(item);return;}const p=patients.find(x=>x.id===currentPatientId);if(!p)return;Object.assign(item,{patient_id:p.id,room_id:room.id,position:position??p.pending_items.length,created_by:session.user.id,updated_by:session.user.id});p.pending_items.push(item);renderAll();const payload={...item};delete payload.assignee_name;await saveMutation('pending_items','insert',payload);}
+async function togglePending(id){const list=patientMode==='create'?draftPending:(patients.find(p=>p.id===currentPatientId)?.pending_items||[]),item=list.find(x=>x.id===id);if(!item)return;item.done=!item.done;renderPending();renderAll();if(patientMode==='edit')await saveMutation('pending_items','update',{done:item.done,updated_by:session.user.id},{id,room_id:room.id});}
+async function deletePending(id){const list=patientMode==='create'?draftPending:(patients.find(p=>p.id===currentPatientId)?.pending_items||[]),index=list.findIndex(x=>x.id===id);if(index<0)return;const [removed]=list.splice(index,1);renderPending();renderAll();if(patientMode==='edit')await saveMutation('pending_items','delete',null,{id,room_id:room.id});toast('Pendência removida.',false,{label:'Desfazer',run:async()=>{list.splice(index,0,removed);renderAll();renderPending();if(patientMode==='edit')await saveMutation('pending_items','insert',removed);}});}
 
-function activePatients() { return patients.filter((patient) => patient.status === 'active'); }
+async function setOutcome(status,id=currentPatientId){const p=patients.find(x=>x.id===id);if(!p)return;const before={status:p.status,outcome_at:p.outcome_at};p.status=status;p.outcome_at=new Date().toISOString();renderAll();closePatient();await saveMutation('patients','update',{status,outcome_at:p.outcome_at,updated_by:session.user.id},{id:p.id,room_id:room.id});toast(status==='discharged'?'Alta registrada.':'Transferência registrada.',false,{label:'Desfazer',run:async()=>{Object.assign(p,before);renderAll();await saveMutation('patients','update',{...before,updated_by:session.user.id},{id:p.id,room_id:room.id});}});}
+async function restorePatient(id){const p=patients.find(x=>x.id===id);if(!p)return;p.status='active';p.outcome_at=null;renderAll();await saveMutation('patients','update',{status:'active',outcome_at:null,updated_by:session.user.id},{id,room_id:room.id});toast('Paciente restaurado ao painel.');}
+function deletePatient(id){const index=patients.findIndex(x=>x.id===id);if(index<0)return;const removed=patients[index];patients.splice(index,1);renderAll();closePatient();clearTimeout(deleteTimer);let undone=false;deleteTimer=setTimeout(async()=>{if(!undone)await saveMutation('patients','delete',null,{id,room_id:room.id});},6000);toast('Paciente removido.',false,{label:'Desfazer',run:()=>{undone=true;clearTimeout(deleteTimer);patients.splice(index,0,removed);renderAll();}});}
 
-function elapsed(enteredAt) {
-  const minutes = Math.floor((Date.now() - new Date(enteredAt).getTime()) / 60000);
-  if (!Number.isFinite(minutes) || minutes < 0) return '';
-  const hours = Math.floor(minutes / 60);
-  return hours >= 24 ? `${Math.floor(hours / 24)}d` : `${hours}h`;
-}
+function subscribeRealtime(){unsubscribeRealtime();realtimeChannel=db.channel(`room-${room.id}`,{config:{presence:{key:presenceKey}}}).on('postgres_changes',{event:'*',schema:'public',table:'patients',filter:`room_id=eq.${room.id}`},()=>loadPatients()).on('postgres_changes',{event:'*',schema:'public',table:'pending_items',filter:`room_id=eq.${room.id}`},()=>loadPatients()).on('presence',{event:'sync'},renderPresence).on('presence',{event:'join'},renderPresence).on('presence',{event:'leave'},renderPresence).subscribe(async status=>{if(status==='SUBSCRIBED'){await realtimeChannel.track({user_id:session.user.id,name:session.user.user_metadata?.display_name||session.user.email?.split('@')[0],editing:null,online_at:new Date().toISOString()});$('connectionText').textContent='Ao vivo';}});}
+function unsubscribeRealtime(){if(realtimeChannel)db.removeChannel(realtimeChannel);realtimeChannel=null;}
+function renderPresence(){if(!realtimeChannel)return;const entries=Object.values(realtimeChannel.presenceState()).flat(),count=entries.length;$('presenceText').textContent=`${count} ${count===1?'pessoa':'pessoas'} online`;editingMap={};entries.filter(x=>x.user_id!==session.user.id&&x.editing).forEach(x=>editingMap[x.editing]=x.name||'Alguém');renderBoard();}
+function trackEditing(id){if(realtimeChannel)realtimeChannel.track({user_id:session.user.id,name:session.user.user_metadata?.display_name||'Profissional',editing:id,online_at:new Date().toISOString()});}
 
-function render() {
-  const list = activePatients();
-  $('board').innerHTML = list.length ? list.map((patient) => `
-    <article class="card ${escapeHtml(patient.priority)}" data-id="${escapeHtml(patient.id)}">
-      <button class="drag-handle" type="button" aria-label="Arrastar">⠿</button>
-      <button class="delete-card" type="button" aria-label="Excluir paciente">✕</button>
-      ${patient.bed ? `<div class="leito-badge">🛏 ${escapeHtml(patient.bed)}</div><br>` : ''}
-      <strong>${escapeHtml(patient.name || 'Sem nome')} — ${patient.age ?? '-'} anos</strong><br>
-      ${patient.responsible ? `<small>Responsável: ${escapeHtml(patient.responsible)}</small>` : ''}
-      <div class="diagnosis">${escapeHtml(patient.diagnosis || '')}</div>
-      <div class="tempo-sala">⏱ ${elapsed(patient.entered_at)}</div>
-      ${(patient.pending_items || []).map((item) => `<div class="p-item ${item.done ? 'done' : ''}"><div class="check" data-pending-id="${escapeHtml(item.id)}"></div><span class="pending-title">${escapeHtml(item.title)}</span></div>`).join('')}
-    </article>`).join('') : '<div class="empty">Nenhum paciente ativo nesta sala.<br><br><button type="button" onclick="novo()">Adicionar primeiro paciente</button></div>';
+async function loadAudit(){if(!room)return;$('auditList').innerHTML='<div class="empty-lane">Carregando atividade…</div>';const {data,error}=await db.from('audit_log').select('*').eq('room_id',room.id).order('occurred_at',{ascending:false}).limit(100);if(error)return $('auditList').innerHTML=`<div class="empty-lane">${escapeHtml(friendlyError(error))}</div>`;auditRows=data||[];const userIds=[...new Set(auditRows.map(x=>x.user_id).filter(Boolean))];let names={};if(userIds.length){const result=await db.from('profiles').select('id,display_name').in('id',userIds);if(!result.error)(result.data||[]).forEach(x=>names[x.id]=x.display_name);}const actions={insert:'adicionou',update:'alterou',delete:'removeu'};$('auditList').innerHTML=auditRows.length?auditRows.map(x=>`<article class="audit-item"><div class="audit-icon">◷</div><div><p><strong>${escapeHtml(names[x.user_id]||'Profissional')}</strong> ${actions[x.action]||x.action} ${x.entity==='patients'?'um paciente':'uma pendência'}.</p><small>${formatDate(x.occurred_at)}</small></div></article>`).join(''):'<div class="empty-lane">Nenhuma atividade registrada.</div>';}
+function showView(id){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id===id));document.querySelectorAll('[data-view]').forEach(x=>x.classList.toggle('active',x.dataset.view===id));if(id==='historico')renderHistory();if(id==='passagem')renderHandoff();if(id==='auditoria')loadAudit();window.scrollTo({top:0,behavior:'smooth'});}
 
-  document.querySelectorAll('.card').forEach((card) => {
-    card.onclick = () => openPatient(card.dataset.id);
-    card.querySelector('.delete-card').onclick = (event) => { event.stopPropagation(); deletePatient(card.dataset.id); };
-    card.querySelectorAll('.check').forEach((check) => { check.onclick = (event) => { event.stopPropagation(); togglePending(check.dataset.pendingId); }; });
-  });
-  initSortable();
-}
+function showShare(){if(!room)return;$('shareCode').textContent=room.invite_code;const link=`${location.origin}${location.pathname}?room=${encodeURIComponent(room.invite_code)}`;$('shareLink').value=link;$('qrCode').innerHTML='';if(window.QRCode)new QRCode($('qrCode'),{text:link,width:160,height:160,colorDark:'#07111f',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M});openModal('shareModal');}
+async function copyText(text,message){try{await navigator.clipboard.writeText(text);toast(message);}catch{toast(text);}}
+async function nativeShare(){const data={title:`ERHub · ${room.name}`,text:`Entre na sala ${room.name} com o código ${room.invite_code}`,url:$('shareLink').value};if(navigator.share)await navigator.share(data);else copyText(data.url,'Link copiado.');}
+function lock(){if(!session)return;$('unlockPassword').value='';$('lockScreen').classList.remove('hidden');setTimeout(()=>$('unlockPassword').focus(),60);}
+async function unlock(e){e.preventDefault();setLoading(true);const {error}=await db.auth.signInWithPassword({email:session.user.email,password:$('unlockPassword').value});setLoading(false);if(error)return toast('Senha incorreta.',true);$('lockScreen').classList.add('hidden');resetInactivity();}
+function resetInactivity(){clearTimeout(inactivityTimer);if(session)inactivityTimer=setTimeout(lock,15*60*1000);}
 
-function renderHistory() {
-  const history = patients.filter((patient) => patient.status !== 'active').sort((a, b) => new Date(b.outcome_at) - new Date(a.outcome_at));
-  $('history').innerHTML = history.length ? history.map((patient) => `
-    <article class="h-item">
-      <strong>${escapeHtml(patient.name || 'Sem nome')} — ${patient.age ?? '-'} anos</strong><br>
-      ${patient.bed ? `Leito: ${escapeHtml(patient.bed)}<br>` : ''}
-      ${patient.responsible ? `Responsável: ${escapeHtml(patient.responsible)}<br>` : ''}
-      <div class="diagnosis">${escapeHtml(patient.diagnosis || '')}</div>
-      <span class="status ${escapeHtml(patient.status)}">${patient.status === 'discharged' ? 'Alta' : 'Transferência'}</span>
-    </article>`).join('') : '<div class="empty">Nenhum paciente no histórico.</div>';
-}
+function updateNetworkState(){const offline=!navigator.onLine;$('offlineBanner').classList.toggle('hidden',!offline);$('connectionDot').classList.toggle('offline',offline);$('connectionText').textContent=offline?'Offline':'Ao vivo';}
+function getQueue(){try{return JSON.parse(localStorage.getItem('erhub_queue')||'[]');}catch{return[];}}
+function queueMutation(op){const queue=getQueue();queue.push({...op,queued_at:new Date().toISOString()});localStorage.setItem('erhub_queue',JSON.stringify(queue));setSync('Na fila para sincronizar');}
+async function saveMutation(table,action,payload,filters={}){if(!navigator.onLine){queueMutation({table,action,payload,filters});localStorage.setItem(roomCacheKey(),JSON.stringify(patients));return{error:new Error('offline')};}try{let query=db.from(table);if(action==='insert')query=query.insert(Array.isArray(payload)?payload:[payload]);if(action==='update')query=query.update(payload);if(action==='delete')query=query.delete();Object.entries(filters).forEach(([key,value])=>query=query.eq(key,value));const {error}=await query;if(error)throw error;localStorage.setItem(roomCacheKey(),JSON.stringify(patients));return{error:null};}catch(error){if(!navigator.onLine||String(error.message).includes('fetch'))queueMutation({table,action,payload,filters});else toast(friendlyError(error),true);return{error};}}
+async function flushQueue(){const queue=getQueue();if(!queue.length)return;setSync('Sincronizando…',true);const remaining=[];for(const op of queue){try{let query=db.from(op.table);if(op.action==='insert')query=query.upsert(Array.isArray(op.payload)?op.payload:[op.payload]);if(op.action==='update')query=query.update(op.payload);if(op.action==='delete')query=query.delete();Object.entries(op.filters||{}).forEach(([k,v])=>query=query.eq(k,v));const {error}=await query;if(error)throw error;}catch{remaining.push(op);}}localStorage.setItem('erhub_queue',JSON.stringify(remaining));setSync(remaining.length?`${remaining.length} alteração(ões) pendente(s)`:'Tudo salvo');if(!remaining.length)toast('Alterações offline sincronizadas.');}
+function registerPwa(){if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));$('installAuth').onclick=installPwa;}
+async function installPwa(){closeModal('mobileMenu');if(!deferredPrompt)return toast('No iPhone, toque em Compartilhar e depois “Adicionar à Tela de Início”.');deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('installAuth').classList.add('hidden');}
 
-function initSortable() {
-  if (sortableInstance) sortableInstance.destroy();
-  sortableInstance = window.Sortable.create($('board'), {
-    handle: '.drag-handle', animation: 150,
-    onEnd: async () => {
-      const ids = [...$('board').querySelectorAll('.card')].map((node) => node.dataset.id);
-      const updates = ids.map((id, index) => db.from('patients').update({ sort_order: index, updated_by: session.user.id }).eq('id', id).eq('room_id', room.id));
-      const results = await Promise.all(updates);
-      const error = results.find((result) => result.error)?.error;
-      if (error) toast(friendlyError(error), true);
-    }
-  });
-}
-
-async function novo() {
-  const order = activePatients().length;
-  setLoading(true);
-  const { data: patient, error } = await db.from('patients').insert({ room_id: room.id, sort_order: order, created_by: session.user.id, updated_by: session.user.id }).select().single();
-  if (error) { setLoading(false); return toast(friendlyError(error), true); }
-  const items = DEFAULT_PENDING.map((title, position) => ({ patient_id: patient.id, room_id: room.id, title, position, created_by: session.user.id, updated_by: session.user.id }));
-  const { error: pendingError } = await db.from('pending_items').insert(items);
-  setLoading(false);
-  if (pendingError) toast(friendlyError(pendingError), true);
-  await loadPatients();
-  openPatient(patient.id);
-}
-
-function openPatient(id) {
-  const patient = patients.find((item) => item.id === id);
-  if (!patient) return;
-  currentPatientId = id;
-  $('nome').value = patient.name || '';
-  $('leito').value = patient.bed || '';
-  $('idade').value = patient.age ?? '';
-  $('dx').value = patient.diagnosis || '';
-  $('responsavel').value = patient.responsible || '';
-  $('prio').value = patient.priority;
-  $('entrada').value = toLocalInput(patient.entered_at);
-  renderPending();
-  $('patientModal').classList.add('open');
-}
-
-function patientPayload() {
-  return {
-    name: $('nome').value.trim(), bed: $('leito').value.trim(),
-    age: $('idade').value === '' ? null : Number($('idade').value),
-    diagnosis: $('dx').value.trim(), responsible: $('responsavel').value.trim(),
-    priority: $('prio').value, entered_at: new Date($('entrada').value).toISOString(),
-    updated_by: session.user.id
-  };
-}
-
-function scheduleSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(savePatient, 500);
-}
-
-async function savePatient() {
-  if (!currentPatientId || !$('entrada').value) return;
-  clearTimeout(saveTimer);
-  const { error } = await db.from('patients').update(patientPayload()).eq('id', currentPatientId).eq('room_id', room.id);
-  if (error) toast(friendlyError(error), true);
-}
-
-async function fecharPaciente() {
-  if (!$('patientModal').classList.contains('open')) return;
-  await savePatient();
-  $('patientModal').classList.remove('open');
-  currentPatientId = null;
-  await loadPatients();
-}
-
-function renderPending() {
-  const patient = patients.find((item) => item.id === currentPatientId);
-  if (!patient) return;
-  $('pendencias').innerHTML = (patient.pending_items || []).map((item) => `
-    <div class="p-item ${item.done ? 'done' : ''}">
-      <div class="check" data-id="${escapeHtml(item.id)}"></div>
-      <span class="pending-title">${escapeHtml(item.title)}</span>
-      <button class="trash" type="button" data-delete-id="${escapeHtml(item.id)}">🗑️</button>
-    </div>`).join('');
-  $('pendencias').querySelectorAll('.check').forEach((node) => node.onclick = () => togglePending(node.dataset.id));
-  $('pendencias').querySelectorAll('[data-delete-id]').forEach((node) => node.onclick = () => deletePending(node.dataset.deleteId));
-}
-
-async function addPend() {
-  const title = $('novaPend').value.trim();
-  const patient = patients.find((item) => item.id === currentPatientId);
-  if (!title || !patient) return;
-  $('novaPend').value = '';
-  const { error } = await db.from('pending_items').insert({ patient_id: patient.id, room_id: room.id, title, position: patient.pending_items.length, created_by: session.user.id, updated_by: session.user.id });
-  if (error) return toast(friendlyError(error), true);
-  await loadPatients();
-}
-
-async function togglePending(id) {
-  const item = patients.flatMap((patient) => patient.pending_items || []).find((pending) => pending.id === id);
-  if (!item) return;
-  const { error } = await db.from('pending_items').update({ done: !item.done, updated_by: session.user.id }).eq('id', id).eq('room_id', room.id);
-  if (error) return toast(friendlyError(error), true);
-  await loadPatients();
-}
-
-async function deletePending(id) {
-  const { error } = await db.from('pending_items').delete().eq('id', id).eq('room_id', room.id);
-  if (error) return toast(friendlyError(error), true);
-  await loadPatients();
-}
-
-async function deletePatient(id) {
-  if (!confirm('Remover paciente sem registrar desfecho?')) return;
-  const { error } = await db.from('patients').delete().eq('id', id).eq('room_id', room.id);
-  if (error) return toast(friendlyError(error), true);
-  await loadPatients();
-}
-
-async function desfecho(status) {
-  await savePatient();
-  const { error } = await db.from('patients').update({ status, outcome_at: new Date().toISOString(), updated_by: session.user.id }).eq('id', currentPatientId).eq('room_id', room.id);
-  if (error) return toast(friendlyError(error), true);
-  $('patientModal').classList.remove('open');
-  currentPatientId = null;
-  await loadPatients();
-}
-
-function gerarPDF() { showView('painel'); setTimeout(() => window.print(), 250); }
-
-function toLocalInput(value) {
-  const date = new Date(value || Date.now());
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-}
-
-setInterval(() => { if (room) render(); }, 60000);
-init().catch((error) => toast(friendlyError(error), true));
+init();
