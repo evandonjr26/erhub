@@ -33,6 +33,7 @@ create table public.patients (
   name text not null default '', bed text not null default '',
   age smallint check (age is null or age between 0 and 130),
   diagnosis text not null default '',
+  handoff_notes text not null default '',
   priority text not null default 'yellow' check (priority in ('red','yellow','green')),
   responsible text not null default '', entered_at timestamptz not null default now(),
   status text not null default 'active' check (status in ('active','discharged','transferred')),
@@ -47,6 +48,9 @@ create table public.pending_items (
   id uuid primary key default gen_random_uuid(), patient_id uuid not null, room_id uuid not null,
   title text not null check (char_length(trim(title)) between 1 and 240),
   done boolean not null default false, position integer not null default 0,
+  due_at timestamptz,
+  assigned_to uuid references auth.users(id) on delete set null,
+  priority text not null default 'normal' check (priority in ('low','normal','high')),
   created_by uuid references auth.users(id) on delete set null,
   updated_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
@@ -71,6 +75,8 @@ create index pending_items_room_patient_position_idx on public.pending_items(roo
 create index pending_items_patient_room_idx on public.pending_items(patient_id,room_id);
 create index pending_items_created_by_idx on public.pending_items(created_by);
 create index pending_items_updated_by_idx on public.pending_items(updated_by);
+create index pending_items_room_due_idx on public.pending_items(room_id,due_at) where done=false;
+create index pending_items_assigned_to_idx on public.pending_items(assigned_to) where assigned_to is not null;
 create index audit_log_room_occurred_idx on public.audit_log(room_id,occurred_at desc);
 create index audit_log_user_id_idx on public.audit_log(user_id);
 
@@ -81,6 +87,15 @@ as $$ select (select auth.uid()) is not null and exists (
 ) $$;
 revoke all on function private.is_room_member(uuid) from public,anon;
 grant execute on function private.is_room_member(uuid) to authenticated;
+
+create function private.shares_room(target_user_id uuid) returns boolean
+language sql stable security definer set search_path=''
+as $$ select (select auth.uid()) is not null and exists (
+  select 1 from public.room_members mine join public.room_members theirs on theirs.room_id=mine.room_id
+  where mine.user_id=(select auth.uid()) and theirs.user_id=target_user_id
+) $$;
+revoke all on function private.shares_room(uuid) from public,anon;
+grant execute on function private.shares_room(uuid) to authenticated;
 
 create function private.set_updated_at() returns trigger language plpgsql set search_path=''
 as $$ begin new.updated_at=now(); return new; end $$;
@@ -116,7 +131,7 @@ alter table public.patients enable row level security;
 alter table public.pending_items enable row level security;
 alter table public.audit_log enable row level security;
 
-create policy profiles_select_self on public.profiles for select to authenticated using((select auth.uid())=id);
+create policy profiles_select_room_or_self on public.profiles for select to authenticated using((select auth.uid())=id or (select private.shares_room(id)));
 create policy profiles_update_self on public.profiles for update to authenticated using((select auth.uid())=id) with check((select auth.uid())=id);
 create policy rooms_select_member on public.rooms for select to authenticated using((select private.is_room_member(id)));
 create policy rooms_update_owner_admin on public.rooms for update to authenticated
