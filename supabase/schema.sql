@@ -175,8 +175,20 @@ begin
   return found_room_id;
 end $$;
 
-revoke all on function public.create_room(text),public.join_room(text) from public,anon;
-grant execute on function public.create_room(text),public.join_room(text) to authenticated;
+create function public.delete_room(target_room_id uuid) returns void
+language plpgsql security definer set search_path=''
+as $
+begin
+  if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
+  if not exists (
+    select 1 from public.room_members
+    where room_id=target_room_id and user_id=(select auth.uid()) and role='owner'
+  ) then raise exception 'Only the room owner can delete it'; end if;
+  delete from public.rooms where id=target_room_id;
+end $;
+
+revoke all on function public.create_room(text),public.join_room(text),public.delete_room(uuid) from public,anon;
+grant execute on function public.create_room(text),public.join_room(text),public.delete_room(uuid) to authenticated;
 revoke all on table public.profiles,public.rooms,public.room_members,public.patients,public.pending_items,public.audit_log from anon;
 grant select,update on public.profiles,public.rooms to authenticated;
 grant select on public.room_members,public.audit_log to authenticated;
