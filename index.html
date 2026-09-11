@@ -11,7 +11,7 @@
   <main id="authView" class="auth-shell">
     <section class="auth-card">
       <div class="brand"><span>ER</span>Hub</div>
-      <h1>Sala de emergência conectada</h1>
+      <h1>O seu Hub da sala de Emergência</h1>
       <p class="muted">Entre para acessar a mesma sala em qualquer aparelho.</p>
       <form id="loginForm" class="stack">
         <label>E-mail<input id="loginEmail" type="email" autocomplete="email" required></label>
@@ -70,18 +70,11 @@
         <button type="button" onclick="showView('painel')">🏥 Painel</button>
         <button type="button" onclick="showView('historico')">📋 Histórico</button>
         <button type="button" onclick="gerarPDF()">🧾 Passagem</button>
-        <button type="button" onclick="exportarDados()">⬇️ Exportar</button>
-        <button type="button" onclick="abrirModalImportar()">⬆️ Importar</button>
         <button type="button" onclick="novo()">+ Novo</button>
         <button class="ghost" type="button" onclick="trocarSala()">＋ Sala</button>
         <button class="ghost" type="button" onclick="logout()">Sair</button>
       </nav>
     </header>
-    <aside id="migrationBanner" class="banner hidden">
-      Há dados antigos salvos neste aparelho.
-      <button type="button" onclick="migrarDadosLocais()">Migrar para esta sala</button>
-      <button type="button" class="ghost" onclick="ocultarMigracao()">Agora não</button>
-    </aside>
     <section id="painel" class="view active"><div id="board" class="board"></div></section>
     <section id="historico" class="view">
       <div class="history-toolbar"><span>Pacientes com desfecho</span></div>
@@ -111,16 +104,6 @@
     </div>
   </div>
 
-  <div id="importModal" class="modal" role="dialog" aria-modal="true" aria-label="Importar passagem">
-    <div class="modal-content">
-      <button class="modal-close" type="button" onclick="fecharModalImportar()">×</button>
-      <h2>Importar passagem</h2>
-      <input type="file" id="importFile" accept="application/json">
-      <div class="separator">ou cole o JSON</div>
-      <textarea id="textoColado" rows="8" placeholder="Cole aqui o conteúdo exportado..."></textarea>
-      <button type="button" onclick="importarTexto()">Importar</button>
-    </div>
-  </div>
   <div id="loading" class="loading hidden">Sincronizando…</div>
   <div id="toast" class="toast hidden" role="status"></div>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
