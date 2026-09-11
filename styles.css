@@ -33,7 +33,8 @@ input,textarea,select{width:100%;background:#0b1728;border:1px solid #29405f;col
   .handoff-card p{margin:2.5mm 0!important;line-height:1.3!important}
   .handoff-card small,.muted,small{color:#222!important;font-size:8px!important}
   .handoff-notes{background:#fff!important;color:#000!important;border:1px solid #777!important;border-radius:0!important;padding:2.5mm!important;margin-top:2.5mm!important}
-  .handoff-pending{margin:2mm 0 0!important;padding-left:5mm!important}
-  .handoff-pending li{margin:1mm 0!important;line-height:1.25!important}
+  .handoff-pending{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:1.5mm 3mm!important;list-style:none!important;margin:2.5mm 0 0!important;padding:0!important}
+  .handoff-pending li{position:relative;margin:0!important;padding-left:4.5mm!important;line-height:1.25!important;break-inside:avoid}
+  .handoff-pending li:before{content:"";position:absolute;left:0;top:.15em;width:2.7mm;height:2.7mm;border:1px solid #000;background:#fff}
   .status-badge{background:#fff!important;color:#000!important;border:1px solid #000!important;padding:1mm 2mm!important;font-size:8px!important}
 }
