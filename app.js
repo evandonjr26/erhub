@@ -66,7 +66,7 @@ function handleActionClick(event) {
   const view=event.target.closest('[data-view]'); if(view){showView(view.dataset.view);closeModal('mobileMenu');return;}
   const outcome=event.target.closest('[data-outcome]')?.dataset.outcome; if(outcome){applyOutcome(outcome);return;}
   const action=event.target.closest('[data-action]')?.dataset.action;
-  if(action==='logout')logout(); if(action==='switch-room'){closeModal('mobileMenu');showOnly('workspaceView');} if(action==='new-patient')newPatient();
+  if(action==='room-members')showRoomMembers(); if(action==='leave-room')leaveRoom(); if(action==='logout')logout(); if(action==='switch-room'){closeModal('mobileMenu');showOnly('workspaceView');} if(action==='new-patient')newPatient();
   if(action==='print')window.print(); if(action==='mobile-menu')openModal('mobileMenu'); if(action==='share'){closeModal('mobileMenu');showShare();}
   if(action==='install')installPwa(); if(action==='lock'){closeModal('mobileMenu');lock();} if(action==='delete-room')deleteRoom(); if(action==='add-pending')addPending();
   const peek=event.target.closest('.peek'); if(peek){const input=$(peek.dataset.target);input.type=input.type==='password'?'text':'password';}
@@ -88,12 +88,12 @@ async function loadRooms(preferredId) {
   if(error)return toast(friendlyError(error),true); rooms=(data||[]).map(x=>({...([].concat(x.rooms||[])[0]),role:x.role})).filter(x=>x.id);
   const invite=new URLSearchParams(location.search).get('room');
   if(invite&&!rooms.some(r=>r.invite_code===invite.toUpperCase())){const joined=await db.rpc('join_room',{invite_code_input:invite.toUpperCase()});if(!joined.error){history.replaceState({},'',location.pathname);return loadRooms(joined.data);}}
-  if(!rooms.length){room=null;showOnly('workspaceView');return;} const saved=preferredId||localStorage.getItem('erhub_room');await selectRoom(rooms.some(x=>x.id===saved)?saved:rooms[0].id);
+  if(!rooms.length){unsubscribeRealtime();room=null;patients=[];showOnly('workspaceView');return;} const saved=preferredId||localStorage.getItem('erhub_room');await selectRoom(rooms.some(x=>x.id===saved)?saved:rooms[0].id);
 }
 async function createRoom(e){e.preventDefault();setLoading(true);const {data,error}=await db.rpc('create_room',{room_name:$('roomName').value.trim()});setLoading(false);if(error)return toast(friendlyError(error),true);$('roomName').value='';await loadRooms(data?.[0]?.created_room_id);toast('Sala criada.');}
 async function joinRoom(e){e.preventDefault();setLoading(true);const {data,error}=await db.rpc('join_room',{invite_code_input:$('inviteCode').value.trim().toUpperCase()});setLoading(false);if(error)return toast(friendlyError(error),true);$('inviteCode').value='';await loadRooms(data);toast('Você entrou na sala.');}
 async function deleteRoom(){if(!room||room.role!=='owner')return toast('Somente o proprietário pode excluir a sala.',true);const name=room.name;if(!confirm(`Excluir definitivamente a sala “${name}” e todos os pacientes e pendências? Esta ação não pode ser desfeita.`))return;setLoading(true);const {error}=await db.rpc('delete_room',{target_room_id:room.id});setLoading(false);if(error)return toast(friendlyError(error),true);unsubscribeRealtime();localStorage.removeItem(roomCacheKey());localStorage.removeItem('erhub_room');closeModal('mobileMenu');room=null;patients=[];await loadRooms();toast('Sala excluída.');}
-async function selectRoom(id){const selected=rooms.find(x=>x.id===id);if(!selected)return;room=selected;localStorage.setItem('erhub_room',room.id);$('roomSelect').innerHTML=rooms.map(x=>`<option value="${x.id}"${x.id===room.id?' selected':''}>${escapeHtml(x.name)}</option>`).join('');showOnly('appView');const canDelete=room.role==='owner';$('deleteRoomDesktop').classList.toggle('hidden',!canDelete);$('deleteRoomMobile').classList.toggle('hidden',!canDelete);await loadRoomMembers();await flushQueue();await loadPatients();subscribeRealtime();}
+async function selectRoom(id){const selected=rooms.find(x=>x.id===id);if(!selected)return;room=selected;localStorage.setItem('erhub_room',room.id);$('roomSelect').innerHTML=rooms.map(x=>`<option value="${x.id}"${x.id===room.id?' selected':''}>${escapeHtml(x.name)}</option>`).join('');showOnly('appView');const canDelete=room.role==='owner'; document.querySelectorAll('[data-action="leave-room"]').forEach(b=>b.classList.toggle('hidden',canDelete));$('deleteRoomDesktop').classList.toggle('hidden',!canDelete);$('deleteRoomMobile').classList.toggle('hidden',!canDelete);await loadRoomMembers();await flushQueue();await loadPatients();subscribeRealtime();}
 
 async function loadRoomMembers(){const members=await db.from('room_members').select('user_id,role').eq('room_id',room.id);if(members.error)return;const ids=(members.data||[]).map(x=>x.user_id);const profiles=ids.length?await db.from('profiles').select('id,display_name').in('id',ids):{data:[]};const names={};(profiles.data||[]).forEach(x=>names[x.id]=x.display_name);roomMembers=(members.data||[]).map(x=>({...x,name:names[x.user_id]||'Profissional'}));$('novaPendAssignee').innerHTML='<option value="">Sem responsável</option>'+roomMembers.map(x=>`<option value="${x.user_id}">${escapeHtml(x.name)}</option>`).join('');}
 
@@ -251,5 +251,65 @@ async function saveMutation(table,action,payload,filters={}){if(!session)return 
 async function flushQueue(){if(flushing)return flushing;if(!session||!navigator.onLine)return;const userId=session.user.id,key=queueKey();flushing=(async()=>{setSync('Sincronizando…',true);while(session?.user?.id===userId&&navigator.onLine){const queue=JSON.parse(localStorage.getItem(key)||'[]');const op=queue[0];if(!op)break;try{let query=db.from(op.table);if(op.action==='insert')query=query.upsert(op.payload,{onConflict:'id',ignoreDuplicates:true});if(op.action==='update')query=query.update(op.payload);if(op.action==='delete')query=query.delete();for(const [k,v]of Object.entries(op.filters||{}))query=query.eq(k,v);const {error}=await query;if(error)throw error;const latest=JSON.parse(localStorage.getItem(key)||'[]');localStorage.setItem(key,JSON.stringify(latest.filter(x=>x.operation_id!==op.operation_id)));}catch(error){toast('Alterações preservadas neste aparelho. Sincronização pendente: '+friendlyError(error),true);break;}}setSync(getQueue().length?'Aguardando sincronização':'Tudo salvo');})();try{await flushing;}finally{flushing=null;}}
 function registerPwa(){if('serviceWorker'in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));$('installAuth').onclick=installPwa;}
 async function installPwa(){closeModal('mobileMenu');if(!deferredPrompt)return toast('No iPhone, toque em Compartilhar e depois “Adicionar à Tela de Início”.');deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;$('installAuth').classList.add('hidden');}
+
+function installRoomManagement(){
+ const menu=$('mobileMenu').querySelector('.modal-panel');
+ const desktop=$('deleteRoomDesktop').parentElement;
+ for(const [container,cls] of [[menu,'menu-action'],[desktop,'nav-item']]){
+  for(const [action,label] of [['room-members','Participantes da sala'],['leave-room','Sair desta sala']]){
+   const b=document.createElement('button');b.type='button';b.className=cls;b.dataset.action=action;b.innerHTML='<span aria-hidden="true">'+(action==='room-members'?'♙':'↪')+'</span>'+label;container.appendChild(b);
+  }
+ }
+ const modal=document.createElement('div');modal.id='membersModal';modal.className='modal';
+ modal.innerHTML='<div class="modal-panel compact-panel"><div class="modal-head"><h2>Participantes da sala</h2><button class="icon-button" type="button" data-close="membersModal" aria-label="Fechar">×</button></div><div id="membersList"></div></div>';
+ document.body.appendChild(modal);
+ setInterval(()=>{if(room&&navigator.onLine&&!document.hidden)verifyRoomAccess();},15000);
+ document.addEventListener('visibilitychange',()=>{if(!document.hidden&&room)verifyRoomAccess();});
+}
+async function verifyRoomAccess(){
+ const id=room?.id;if(!id||!session)return;
+ const {data,error}=await db.from('room_members').select('user_id').eq('room_id',id).eq('user_id',session.user.id);
+ if(!error&&!data?.length&&room?.id===id){await forgetRoom(id);toast('Você não tem mais acesso a esta sala.');return false;}
+ return !error;
+}
+async function forgetRoom(id){
+ unsubscribeRealtime();clearTimeout(saveTimer);patientDirty=false;currentPatientId=null;
+ localStorage.removeItem(`erhub_snapshot_${session.user.id}_${id}`);
+ localStorage.setItem(queueKey(),JSON.stringify(getQueue().filter(op=>{
+ const payload=Array.isArray(op.payload)?op.payload:[op.payload];
+ return op.filters?.room_id!==id&&!payload.some(p=>p?.room_id===id);
+ })));
+ localStorage.removeItem('erhub_room');room=null;patients=[];roomMembers=[];auditRows=[];
+ document.querySelectorAll('.modal.open').forEach(m=>m.classList.remove('open'));document.body.style.overflow='';
+ for(const target of ['board','history','handoff','auditList'])$(target).innerHTML='';
+ history.replaceState({},'',location.pathname);await loadRooms();
+}
+async function leaveRoom(){
+ if(!room||room.role==='owner')return;
+ if(!navigator.onLine)return toast('Conecte-se à internet para sair da sala.',true);
+ if(currentPatientId){await closePatient();if(patientDirty)return;}
+ await flushQueue();if(getQueue().length)return toast('Sincronize as alterações antes de sair da sala.',true);
+ const id=room.id;
+ if(!confirm('Sair desta sala? Ela continuará disponível para os outros participantes.'))return;
+ const {error}=await db.rpc('leave_room',{target_room_id:id});
+ if(error)return toast(friendlyError(error),true);
+ await forgetRoom(id);toast('Você saiu da sala.');
+}
+async function showRoomMembers(){
+ closeModal('mobileMenu');if(!room)return;
+ await loadRoomMembers();openModal('membersModal');
+ const owner=room.role==='owner';
+ $('membersList').innerHTML='<p class="muted">Apenas o criador pode remover participantes.</p>'+roomMembers.map(m=>`<div style="display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border)"><div><strong>${escapeHtml(m.name)}</strong><small style="display:block">${m.role==='owner'?'Criador':'Participante'}${m.user_id===session.user.id?' · Você':''}</small></div>${owner&&m.role!=='owner'?`<button class="button danger" type="button" data-remove-member="${m.user_id}">Remover</button>`:''}</div>`).join('');
+ $('membersList').querySelectorAll('[data-remove-member]').forEach(b=>b.onclick=()=>removeRoomMember(b.dataset.removeMember));
+}
+async function removeRoomMember(id){
+ const m=roomMembers.find(x=>x.user_id===id);
+ if(!m||room?.role!=='owner')return;
+ if(!confirm(`Remover ${m.name} da sala? O código de convite será renovado para impedir a reentrada com o código antigo. Os demais participantes permanecem.`))return;
+ const {error}=await db.rpc('remove_room_member',{target_room_id:room.id,target_user_id:id});
+ if(error)return toast(friendlyError(error),true);
+ const current=room.id;await loadRooms(current);await showRoomMembers();toast('Participante removido. O código de convite foi renovado.');
+}
+installRoomManagement();
 
 init();
