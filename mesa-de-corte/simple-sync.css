@@ -1,0 +1,29 @@
+/* Mesa de Corte v1.5 — interface simples para sincronizar palmas */
+.clap-simple{display:flex;flex-direction:column;gap:12px;padding:4px 0 12px}
+.clap-simple-intro{font-size:13px;line-height:1.55;color:#c7d7d5;margin:0 0 3px}
+.clap-simple-step{border:1px solid #355360;border-radius:13px;padding:13px;background:#0b151e;display:flex;flex-direction:column;gap:11px;min-width:0}
+.clap-simple-step.is-marked{border-color:#40a88f;background:#0b1f20}
+.clap-simple-title{display:flex;align-items:center;gap:9px;min-width:0}
+.clap-step-num{display:inline-grid;place-items:center;border-radius:50%;background:#1f5149;color:#93f5d6;width:27px;height:27px;font-weight:900;font-size:14px;flex:none}
+.clap-simple-title strong{font-size:14px;color:#ecf8f6;flex:1}
+.clap-simple-done{color:#a4b9ba;font-size:11px;text-align:right}
+.clap-simple-step.is-marked .clap-simple-done{color:#69e4b4;font-weight:700}
+.clap-simple-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:8px}
+.clap-simple-actions button{min-height:48px;border-radius:10px;border:1px solid #4b6473;font-weight:800;font-size:13px;padding:11px 8px;white-space:normal}
+.clap-listen{color:#f0f7ff;background:#24394b}
+.clap-mark{color:#06291e;background:#56dcaf;border-color:#69e8be!important}
+.clap-simple-seek{display:flex;align-items:center;gap:11px;min-width:0}
+.clap-simple-seek input{flex:1;min-width:0;accent-color:#55d9b3;height:25px}
+.clap-simple-seek span{font-size:12px;color:#b8c8d2;font-variant-numeric:tabular-nums;min-width:42px;text-align:right}
+.clap-sync{width:100%;padding:16px 10px;min-height:54px;border-radius:11px;border:1px solid #79ecbf;background:#3fdfa8;color:#053320;font-weight:950;font-size:14px;letter-spacing:.01em}
+.clap-sync:disabled{opacity:.45}
+.clap-simple-result{font-size:12px;line-height:1.5;color:#b9cdd0;background:#12222a;border-left:3px solid #547983;padding:10px 12px;border-radius:5px}
+.clap-simple-result[data-state="success"]{color:#aaf3cf;border-left-color:#40d89f;background:#102c29}
+.clap-simple-result[data-state="ready"]{color:#f0db9b;border-left-color:#f4c263}
+.clap-simple-result[data-state="error"]{color:#ffa9ad;border-left-color:#f07777}
+.clap-check{width:100%;min-height:43px;border-radius:9px;border:1px solid #5b8caa;background:#1e4054;color:#eaf9fd;font-weight:800}
+.clap-simple-help{color:#9db2be;font-size:11px;line-height:1.55}
+.clap-advanced{border-top:1px solid #34434d;margin-top:2px;padding-top:10px}
+.clap-advanced>summary{cursor:pointer;touch-action:manipulation;color:#b8cbd6;font-weight:700;font-size:12px;padding:9px 4px;min-height:40px}
+.clap-advanced-content{display:flex;flex-direction:column;gap:12px;padding:10px 0 6px}
+@media(max-width:450px){.clap-simple-actions{grid-template-columns:1fr 1fr}.clap-simple-actions button{font-size:12px;padding:10px 5px}.clap-simple-step{padding:11px}.clap-simple-intro{font-size:12px}}
