@@ -3,3 +3,5 @@
 !bootstrap.mjs
 !manual-sync-apply.mjs
 !Dockerfile
+!simple-sync.js
+!simple-sync.css
