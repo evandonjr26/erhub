@@ -1,4 +1,5 @@
 *
 !app-data.b64
 !bootstrap.mjs
+!manual-sync-apply.mjs
 !Dockerfile
