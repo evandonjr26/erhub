@@ -10,8 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     MAX_AUDIO_MB=30 MAX_DURATION_SECONDS=60 \
     ENABLE_OLLAMA=false MOTION_STORAGE=/motion-studio/storage
 WORKDIR /motion-studio
-COPY app-data.b64 bootstrap.py ./
-RUN python bootstrap.py && python -m pip install --no-cache-dir -r requirements.txt \
+COPY app-data.b64 bootstrap.py auth_fix.py ./
+RUN python bootstrap.py && python auth_fix.py && python -m pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /motion-studio/storage \
     && rm -f app-data.b64
 EXPOSE 8000
