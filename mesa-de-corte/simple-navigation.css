@@ -1,0 +1,57 @@
+/* Mesa de Corte v1.8 — navegação fácil, touch e responsiva */
+.simple-video-navigation {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  align-items:center;
+  gap:11px;
+  margin:12px 0 16px;
+  padding:12px;
+  border-radius:12px;
+  border:1px solid #385563;
+  background:#112128;
+  min-width:0;
+}
+.simple-video-start {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:44px;
+  padding:9px 12px;
+  border-radius:9px;
+  background:#253d4e;
+  border:1px solid #526f80;
+  color:#eef8fd;
+  font-weight:800;
+  font-size:14px;
+  white-space:nowrap;
+  touch-action:manipulation;
+}
+.simple-video-navigation #simpleVideoSeek {
+  display:block!important;
+  width:100%;
+  min-width:0;
+  min-height:42px;
+  margin:0;
+  background:transparent;
+  accent-color:#43dfa9;
+  cursor:pointer;
+  touch-action:pan-y;
+}
+.simple-video-time {
+  font-size:12px;
+  color:#d0dfe3;
+  font-weight:750;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.simple-video-start:disabled,
+.simple-video-navigation #simpleVideoSeek:disabled {
+  opacity:.45;
+  cursor:not-allowed;
+}
+#backOne,#fwdOne,#seek {display:none!important}
+@media(max-width:450px) {
+  .simple-video-navigation {gap:8px;padding:9px 8px}
+  .simple-video-start {font-size:12px;padding:8px;min-height:44px}
+  .simple-video-time {font-size:10px}
+}
