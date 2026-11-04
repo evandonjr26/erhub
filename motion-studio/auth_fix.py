@@ -22,7 +22,7 @@ def access(request: Request):
 source = server.read_text(encoding='utf-8')
 if old_server in source:
     server.write_text(source.replace(old_server, new_server, 1), encoding='utf-8')
-elif new_server not in source:
+elif new_server not in source and not ('@app.get("/api/access")\ndef access(request: Request):' in source and '"authenticated": authenticated}' in source):
     raise SystemExit('Unexpected server access handler; refusing to patch')
 
 js_source = frontend.read_text(encoding='utf-8')
