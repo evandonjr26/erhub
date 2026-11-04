@@ -1,0 +1,57 @@
+/* Mesa de Corte v1.6 — ações finais acessíveis no iPhone */
+.bottom-editor-actions {
+  margin: 22px clamp(16px,2.5vw,42px) calc(22px + env(safe-area-inset-bottom,0px));
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  border-radius: 14px;
+  background: #111a20;
+}
+.bottom-actions-help {
+  color: #b8cbd2;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  text-align: center;
+}
+.bottom-actions-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  gap: 12px;
+  width: 100%;
+}
+.bottom-actions-row button {
+  min-width: 0;
+  width: 100%;
+  min-height: 60px;
+  border-radius: 11px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 850;
+  padding: 12px 8px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+  touch-action: manipulation;
+}
+.bottom-preview-button {
+  background: #243849;
+  color: #eff8fd;
+  border: 1px solid #597d99;
+}
+.bottom-actions-row #exportTop.bottom-export-button {
+  background: var(--green,#43dfaa);
+  color: #062b21;
+  border: 1px solid #61ecc1;
+  box-shadow: 0 6px 23px #1ec99516;
+}
+.bottom-actions-row button:disabled { opacity: .43; cursor: not-allowed; box-shadow: none; }
+.bottom-actions-row button:not(:disabled):active { transform: scale(.985); }
+@media(max-width:450px) {
+  .bottom-editor-actions { margin-top: 18px; padding: 12px; gap: 10px; }
+  .bottom-actions-row { gap: 10px; }
+  .bottom-actions-row button { min-height: 58px; font-size: 15px; }
+}
