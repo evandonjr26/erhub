@@ -105,11 +105,6 @@
   });
   // A prévia usa um relógio de reprodução via requestAnimationFrame e não emite
   // atualizações de tempo a cada quadro; acompanhar sem alterar a lógica do editor.
-  let last=0;
-  function watch(now) {
-    if(now-last>110){last=now;refresh()}
-    requestAnimationFrame(watch);
-  }
-  requestAnimationFrame(watch);
+  window.setInterval(refresh,140);
   refresh();
 })();
